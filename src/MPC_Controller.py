@@ -50,3 +50,14 @@ for i in range(N):
     # Predict next state using the kinematic model
     x_next = X[:, i] + dt * f(X[0, i], X[1, i], X[2, i], X[3, i], U[0, i], U[1, i])
     g.append(X[:, i+1] - x_next)  # Constraint: state at i+1 must match model prediction
+    
+# Create optimization solver
+opti = ca.Opti()
+opti.minimize(cost)  # Minimize trajectory tracking error
+opti.subject_to(g == 0)  # Apply system constraints
+opti.solver('ipopt')  # Use IPOPT solver
+
+# Solve the problem
+solution = opti.solve()
+optimal_control = solution.value(U)
+
