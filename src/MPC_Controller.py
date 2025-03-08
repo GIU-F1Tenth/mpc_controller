@@ -27,3 +27,21 @@ thetadot = v * ca.tan(delta) / L
 
 # Define state-space function
 f = ca.Function('f', [x, y, v, theta, a, delta], [xdot, ydot, vdot, thetadot])
+
+# Define optimization variables
+U = ca.MX.sym('U', 2, N)  # Control inputs (a, delta) for N steps
+X = ca.MX.sym('X', 4, N+1)  # States for N+1 steps
+
+# Cost function weights
+Q = np.diag([10, 10, 1, 1])  # Weights for (x, y, v, theta)
+R = np.diag([1, 1])          # Weights for (acceleration, steering)
+
+# Reference trajectory
+X_ref = ca.MX.sym('X_ref', 4, N+1)
+
+cost = 0
+for i in range(N):
+    state_error = X[:, i] - X_ref[:, i]
+    control_effort = U[:, i]
+    cost += ca.mtimes([state_error.T, Q, state_error]) + ca.mtimes([control_effort.T, R, control_effort])
+
