@@ -45,3 +45,8 @@ for i in range(N):
     control_effort = U[:, i]
     cost += ca.mtimes([state_error.T, Q, state_error]) + ca.mtimes([control_effort.T, R, control_effort])
 
+g = []
+for i in range(N):
+    # Predict next state using the kinematic model
+    x_next = X[:, i] + dt * f(X[0, i], X[1, i], X[2, i], X[3, i], U[0, i], U[1, i])
+    g.append(X[:, i+1] - x_next)  # Constraint: state at i+1 must match model prediction
