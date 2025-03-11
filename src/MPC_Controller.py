@@ -1,63 +1,79 @@
 import casadi as ca
 import numpy as np
 
-# Define MPC parameters
-T = 1.0  # Time horizon (seconds)
-N = 10   # Number of prediction steps
-dt = T / N  # Time step per iteration
+class MPC_Controller:
+    def __init__(self, N=10, T=1.0, L=0.33):
+        self.N = N       # Prediction horizon
+        self.T = T       # Total time horizon
+        self.dt = T / N  # Time step
+        self.L = L       # Wheelbase
 
-# Vehicle parameters
-L = 0.33  # Wheelbase
+        self._setup_optimizer()     # Create optimization problem
 
-# Define state variables
-x = ca.SX.sym('x')
-y = ca.SX.sym('y')
-v = ca.SX.sym('v')
-theta = ca.SX.sym('theta')
+    def _setup_optimizer(self):
 
-# Define control variables
-a = ca.SX.sym('a')   # Acceleration
-delta = ca.SX.sym('delta')  # Steering angle
+        # State variables
+        x = ca.SX.sym('x')
+        y = ca.SX.sym('y')
+        v = ca.SX.sym('v')
+        theta = ca.SX.sym('theta')
 
-# Define system dynamics using the Bicycle Model
-xdot = v * ca.cos(theta)
-ydot = v * ca.sin(theta)
-vdot = a
-thetadot = v * ca.tan(delta) / L
+        # Control variables
+        a = ca.SX.sym('a')   
+        delta = ca.SX.sym('delta')
 
-# Define state-space function
-f = ca.Function('f', [x, y, v, theta, a, delta], [xdot, ydot, vdot, thetadot])
+        # System dynamics (Bicycle model)
+        xdot = v * ca.cos(theta)
+        ydot = v * ca.sin(theta)
+        vdot = a
+        thetadot = v * ca.tan(delta) / self.L
 
-# Define optimization variables
-U = ca.MX.sym('U', 2, N)  # Control inputs (a, delta) for N steps
-X = ca.MX.sym('X', 4, N+1)  # States for N+1 steps
+        # Define system function
+        self.f = ca.Function('f', [x, y, v, theta, a, delta], [xdot, ydot, vdot, thetadot])
 
-# Cost function weights
-Q = np.diag([10, 10, 1, 1])  # Weights for (x, y, v, theta)
-R = np.diag([1, 1])          # Weights for (acceleration, steering)
+        # Optimization variables
+        self.opti = ca.Opti()
+        self.U = self.opti.variable(2, self.N)  # [Acceleration, Steering]
+        self.X = self.opti.variable(4, self.N + 1)  # [x, y, v, theta]
 
-# Reference trajectory
-X_ref = ca.MX.sym('X_ref', 4, N+1)
+        # Cost function weights
+        self.Q = np.diag([10, 10, 1, 1])  # Penalize position & velocity error
+        self.R = np.diag([1, 1])  # Penalize control input
 
-cost = 0
-for i in range(N):
-    state_error = X[:, i] - X_ref[:, i]
-    control_effort = U[:, i]
-    cost += ca.mtimes([state_error.T, Q, state_error]) + ca.mtimes([control_effort.T, R, control_effort])
+        # Reference trajectory
+        self.X_ref = self.opti.parameter(4, self.N + 1)
 
-g = []
-for i in range(N):
-    # Predict next state using the kinematic model
-    x_next = X[:, i] + dt * f(X[0, i], X[1, i], X[2, i], X[3, i], U[0, i], U[1, i])
-    g.append(X[:, i+1] - x_next)  # Constraint: state at i+1 must match model prediction
-    
-# Create optimization solver
-opti = ca.Opti()
-opti.minimize(cost)  # Minimize trajectory tracking error
-opti.subject_to(g == 0)  # Apply system constraints
-opti.solver('ipopt')  # Use IPOPT solver
+        # The Cost function
+        cost = 0
+        for i in range(self.N):
+            state_error = self.X[:, i] - self.X_ref[:, i]
+            control_effort = self.U[:, i]
+            cost += ca.mtimes([state_error.T, self.Q, state_error]) + ca.mtimes([control_effort.T, self.R, control_effort])
+        
+        self.opti.minimize(cost)
 
-# Solve the problem
-solution = opti.solve()
-optimal_control = solution.value(U)
+        # Constraints
+        g = []
+        for i in range(self.N):
+            x_next = self.X[:, i] + self.dt * self.f(self.X[0, i], self.X[1, i], self.X[2, i], self.X[3, i], self.U[0, i], self.U[1, i])
+            g.append(self.X[:, i+1] - x_next)
 
+        self.opti.subject_to(ca.vertcat(*g) == 0)
+
+        # Control limits
+        self.opti.subject_to(self.opti.bounded(-2, self.U[0, :], 2))             # Acceleration limits
+        self.opti.subject_to(self.opti.bounded(-0.4, self.U[1, :], 0.4))         # Steering limits
+
+        # Solver
+        self.opti.solver('ipopt')
+
+    def solve_mpc(self, x, y, v, theta, X_ref):
+
+        try:
+            self.opti.set_value(self.X_ref, X_ref)
+            sol = self.opti.solve()
+            optimal_accel = sol.value(self.U[0, 0])
+            optimal_steer = sol.value(self.U[1, 0])
+            return optimal_accel, optimal_steer
+        except RuntimeError:
+            return 0.0, 0.0  
