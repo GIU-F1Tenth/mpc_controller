@@ -35,6 +35,7 @@ class MPC_Controller:
         self.opti = ca.Opti()
         self.U = self.opti.variable(2, self.N)  # [Acceleration, Steering]
         self.X = self.opti.variable(4, self.N + 1)  # [x, y, v, theta]
+        
 
         # Cost function weights
         self.Q = np.diag([10, 10, 1, 1])  # Penalize position & velocity error
@@ -55,7 +56,7 @@ class MPC_Controller:
         # Constraints
         g = []
         for i in range(self.N):
-            x_next = self.X[:, i] + self.dt * self.f(self.X[0, i], self.X[1, i], self.X[2, i], self.X[3, i], self.U[0, i], self.U[1, i])
+            x_next = self.X[:, i] + self.dt * ca.vertcat(*self.f(self.X[0, i], self.X[1, i], self.X[2, i], self.X[3, i], self.U[0, i], self.U[1, i]))
             g.append(self.X[:, i+1] - x_next)
 
         self.opti.subject_to(ca.vertcat(*g) == 0)
@@ -77,3 +78,9 @@ class MPC_Controller:
             return optimal_accel, optimal_steer
         except RuntimeError:
             return 0.0, 0.0  
+
+
+# Main function to test
+#if __name__ == "__main__":
+ #   print("Initializing MPC Controller...")
+  #  mpc = MPC_Controller()

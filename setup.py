@@ -11,15 +11,16 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'casadi'],  
     zip_safe=True,
-    maintainer='fam',
-    maintainer_email='fam@awadlouis.com',
-    description='TODO: Package description',
-    license='TODO: License declaration',
-    tests_require=['pytest'],
+    maintainer='MOhammed_Azab',
+    maintainer_email='mo7ammed3zab@outlook.com',
+    description='Model Predictive Control (MPC) for autonomous systems',  
+    license='MIT',  
+    tests_require=['pytest', 'pytest-cov'],  
     entry_points={
         'console_scripts': [
+            "MPC_Node = src.MPCtrlNode:main",  
         ],
     },
 )
