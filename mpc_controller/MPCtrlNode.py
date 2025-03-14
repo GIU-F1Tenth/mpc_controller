@@ -3,7 +3,7 @@ from rclpy.node import Node
 from nav_msgs.msg import Odometry
 from ackermann_msgs.msg import AckermannDriveStamped
 import numpy as np
-from MPC_Controller import MPC_Controller
+from mpc_controller.MPC_Controller import MPC_Controller
 
 
 class MPCCtrlNode(Node):
