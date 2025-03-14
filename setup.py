@@ -20,7 +20,7 @@ setup(
     tests_require=['pytest', 'pytest-cov'],  
     entry_points={
         'console_scripts': [
-            'MPC_Node = MPCtrlNode:main'
+            'MPC_Node = mpc_controller.MPCtrlNode:main'
         ],
     },
 )
