@@ -24,10 +24,15 @@ class MPCCtrlNode(Node):
         v = msg.twist.twist.linear.x
         theta = msg.pose.pose.orientation.z
 
+        self.get_logger().info(f"Odometry - X: {x}, Y: {y}, Velocity: {v}, Theta: {theta}")
+
         # Create reference trajectory 
         X_ref = np.tile([x, y, v, theta], (11, 1)).T  # (4, N+1) shape
 
+        # Solve for optimal control
         optimal_accel, optimal_steer = self.mpc.solve_mpc(x, y, v, theta, X_ref)
+
+        self.get_logger().info(f"Optimal Control - Acceleration: {optimal_accel}, Steering Angle: {optimal_steer}")
 
         # Publish Ackermann Drive command
         drive_msg = AckermannDriveStamped()
