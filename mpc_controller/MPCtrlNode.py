@@ -4,21 +4,22 @@ from nav_msgs.msg import Odometry
 from ackermann_msgs.msg import AckermannDriveStamped
 import numpy as np
 import transforms3d.euler as euler
-from mpc_controller.MPC_Controller import MPC_Controller
-
-
+from mpc_controller.MPC_Controller import MPC_Controller  # Import MPC Controller
 
 class MPCCtrlNode(Node):
     def __init__(self):
         super().__init__('mpc_controller')
 
-        self.mpc = MPC_Controller(N = 10, T = 1.0, L = 0.33)
+        self.mpc = MPC_Controller(N=10, T=1.0, L=0.33)
 
         self.subscription = self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
 
         self.publisher_ = self.create_publisher(AckermannDriveStamped, '/drive', 10)
         
         self.get_logger().info("MPC Controller has been started")
+
+        # Define the trajectory type: 'circular' or 'straight'
+        self.trajectory_type = 'circular'
 
     def odom_callback(self, msg):
         x = msg.pose.pose.position.x
@@ -29,8 +30,11 @@ class MPCCtrlNode(Node):
         
         self.get_logger().info(f"Odometry - X: {x}, Y: {y}, Velocity: {v}, Theta: {theta}")
 
-        # Create reference trajectory 
-        X_ref = np.tile([x, y, v, theta], (11, 1)).T  # (4, N+1) shape
+        # Choose the trajectory type
+        if self.trajectory_type == 'circular':
+            X_ref = self.mpc.create_circular_trajectory(center_x=0, center_y=0, radius=1.5, start_theta=theta, N=10)
+        else:
+            X_ref = self.mpc.create_straight_line_trajectory(start_x=x, start_y=y, start_theta=theta, end_x=x+5, end_y=y, N=10)
 
         # Solve for optimal control
         optimal_accel, optimal_steer = self.mpc.solve_mpc(x, y, v, theta, X_ref)
