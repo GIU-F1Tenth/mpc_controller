@@ -85,11 +85,11 @@ class MPC_Controller:
         angular_velocity = target_velocity / radius  # Turn rate based on velocity
     
         for i in range(N+1):
-            theta = start_theta + angular_velocity * i  # Update the angle
-            trajectory[0, i] = center_x + radius * np.cos(theta)  # x
-            trajectory[1, i] = center_y + radius * np.sin(theta)  # y
-            trajectory[2, i] = target_velocity  # velocity
-            trajectory[3, i] = theta  # Heading (theta)
+            theta = start_theta + angular_velocity * i 
+            trajectory[0, i] = center_x + radius * np.cos(theta) 
+            trajectory[1, i] = center_y + radius * np.sin(theta)  
+            trajectory[2, i] = target_velocity  
+            trajectory[3, i] = theta  
     
         return trajectory
     
@@ -105,10 +105,10 @@ class MPC_Controller:
     
         for i in range(N+1):
             t = i / N
-            trajectory[0, i] = start_x + t * delta_x  # x
-            trajectory[1, i] = start_y + t * delta_y  # y
-            trajectory[2, i] = target_velocity  # velocity
-            trajectory[3, i] = start_theta  # Heading (theta)
+            trajectory[0, i] = start_x + t * delta_x 
+            trajectory[1, i] = start_y + t * delta_y  
+            trajectory[2, i] = target_velocity  
+            trajectory[3, i] = start_theta
     
             return trajectory
 

@@ -4,7 +4,7 @@ from nav_msgs.msg import Odometry
 from ackermann_msgs.msg import AckermannDriveStamped
 import numpy as np
 import transforms3d.euler as euler
-from mpc_controller.MPC_Controller import MPC_Controller  # Import MPC Controller
+from mpc_controller.MPC_Controller import MPC_Controller  
 
 class MPCCtrlNode(Node):
     def __init__(self):
@@ -18,7 +18,6 @@ class MPCCtrlNode(Node):
         
         self.get_logger().info("MPC Controller has been started")
 
-        # Define the trajectory type: 'circular' or 'straight'
         self.trajectory_type = 'circular'
 
     def odom_callback(self, msg):
@@ -30,7 +29,6 @@ class MPCCtrlNode(Node):
         
         self.get_logger().info(f"Odometry - X: {x}, Y: {y}, Velocity: {v}, Theta: {theta}")
 
-        # Choose the trajectory type
         if self.trajectory_type == 'circular':
             X_ref = self.mpc.create_circular_trajectory(center_x=0, center_y=0, radius=1.5, start_theta=theta, N=10)
         else:
