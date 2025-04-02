@@ -3,7 +3,9 @@ from rclpy.node import Node
 from nav_msgs.msg import Odometry
 from ackermann_msgs.msg import AckermannDriveStamped
 import numpy as np
+import transforms3d.euler as euler
 from mpc_controller.MPC_Controller import MPC_Controller
+
 
 
 class MPCCtrlNode(Node):
@@ -22,8 +24,9 @@ class MPCCtrlNode(Node):
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
         v = msg.twist.twist.linear.x
-        theta = msg.pose.pose.orientation.z
-
+        quat = msg.pose.pose.orientation
+        _, _, theta = euler.quat2euler([quat.x, quat.y, quat.z, quat.w])
+        
         self.get_logger().info(f"Odometry - X: {x}, Y: {y}, Velocity: {v}, Theta: {theta}")
 
         # Create reference trajectory 

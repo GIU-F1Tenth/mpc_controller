@@ -79,6 +79,39 @@ class MPC_Controller:
         except RuntimeError:
             return 0.0, 0.0  
 
+    def create_circular_trajectory(center_x, center_y, radius, start_theta, N):
+        trajectory = np.zeros((4, N+1))  # (x, y, velocity, theta)
+        target_velocity = 1.0  # m/s
+        angular_velocity = target_velocity / radius  # Turn rate based on velocity
+    
+        for i in range(N+1):
+            theta = start_theta + angular_velocity * i  # Update the angle
+            trajectory[0, i] = center_x + radius * np.cos(theta)  # x
+            trajectory[1, i] = center_y + radius * np.sin(theta)  # y
+            trajectory[2, i] = target_velocity  # velocity
+            trajectory[3, i] = theta  # Heading (theta)
+    
+        return trajectory
+    
+    def create_straight_line_trajectory(start_x, start_y, start_theta, end_x, end_y, N):
+        trajectory = np.zeros((4, N+1))  # (x, y, velocity, theta)
+    
+        # Define the line
+        delta_x = end_x - start_x
+        delta_y = end_y - start_y
+        distance = np.sqrt(delta_x**2 + delta_y**2)
+    
+        target_velocity = 1.0  # m/s
+    
+        for i in range(N+1):
+            t = i / N
+            trajectory[0, i] = start_x + t * delta_x  # x
+            trajectory[1, i] = start_y + t * delta_y  # y
+            trajectory[2, i] = target_velocity  # velocity
+            trajectory[3, i] = start_theta  # Heading (theta)
+    
+            return trajectory
+
 
 # Main function to test
 #if __name__ == "__main__":
