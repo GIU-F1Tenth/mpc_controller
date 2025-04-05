@@ -14,9 +14,11 @@ class MPCCtrlNode(Node):
 
         self.subscription = self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
 
-        self.publisher_ = self.create_publisher(AckermannDriveStamped, '/drive', 10)
+        self.publisher_ = self.create_publisher(AckermannDriveStamped, '/ackermann_cmd', 10)
         
         self.get_logger().info("MPC Controller has been started")
+        self.get_logger().info('circular')
+        
 
         self.trajectory_type = 'circular'
 
