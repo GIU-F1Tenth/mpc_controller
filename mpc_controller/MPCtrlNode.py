@@ -30,14 +30,21 @@ class MPCCtrlNode(Node):
         _, _, theta = euler.quat2euler([quat.x, quat.y, quat.z, quat.w])
         
         self.get_logger().info(f"Odometry - X: {x}, Y: {y}, Velocity: {v}, Theta: {theta}")
+        
+        current_state = (x, y, v, theta)
 
         if self.trajectory_type == 'circular':
             X_ref = self.mpc.create_circular_trajectory(center_x=0, center_y=0, radius=1.5, start_theta=theta, N=10)
-        else:
+            # Solve for optimal control
+            optimal_accel, optimal_steer = self.mpc.solve_mpc(x, y, v, theta, X_ref)
+        elif self.trajectory_type == 'straight':
             X_ref = self.mpc.create_straight_line_trajectory(start_x=x, start_y=y, start_theta=theta, end_x=x+5, end_y=y, N=10)
+            # Solve for optimal control
+            optimal_accel, optimal_steer = self.mpc.solve_mpc(x, y, v, theta, X_ref)
+        elif self.trajectory_type == 'pure_pursuit':
+            optimal_accel, optimal_steer = self.mpc.followPurePursuit(current_state, lookahead_distance=0.7)
 
-        # Solve for optimal control
-        optimal_accel, optimal_steer = self.mpc.solve_mpc(x, y, v, theta, X_ref)
+        
 
         self.get_logger().info(f"Optimal Control - Acceleration: {optimal_accel}, Steering Angle: {optimal_steer}")
 
