@@ -1,5 +1,6 @@
 import casadi as ca
 import numpy as np
+import pandas as pd
 
 class MPC_Controller:
     def __init__(self, N=10, T=1.0, L=0.33):
@@ -111,6 +112,45 @@ class MPC_Controller:
             trajectory[3, i] = start_theta
     
             return trajectory
+        
+    def followPurePursuit(self, current_state, lookahead_distance=0.5, csv_path="mansour_3_out.csv"):
+        """
+        Generate reference from CSV using Pure Pursuit logic and solve MPC
+        """
+        # Load path
+        path = pd.read_csv(csv_path)
+        x_path = path['x'].values
+        y_path = path['y'].values
+        v_path = path['velocity'].values
+
+        x, y, v, theta = current_state
+
+        # Find lookahead point
+        distances = np.hypot(x_path - x, y_path - y)
+        lookahead_idx = np.argmin(np.abs(distances - lookahead_distance))
+
+        # Reference trajectory: slice path from lookahead index
+        end_idx = min(lookahead_idx + self.N + 1, len(x_path))
+        ref_x = x_path[lookahead_idx:end_idx]
+        ref_y = y_path[lookahead_idx:end_idx]
+        ref_v = v_path[lookahead_idx:end_idx]
+
+        # Estimate theta between consecutive points
+        thetas = np.arctan2(np.diff(ref_y, append=ref_y[-1]), np.diff(ref_x, append=ref_x[-1]))
+
+        # Pad if needed
+        while len(ref_x) < self.N + 1:
+            ref_x = np.append(ref_x, ref_x[-1])
+            ref_y = np.append(ref_y, ref_y[-1])
+            ref_v = np.append(ref_v, 0.0)
+            thetas = np.append(thetas, thetas[-1])
+
+        # Stack to trajectory format (4, N+1)
+        X_ref = np.vstack((ref_x, ref_y, ref_v, thetas))
+
+        return self.solve_mpc(x, y, v, theta, X_ref)
+
+        
 
 
 # Main function to test
