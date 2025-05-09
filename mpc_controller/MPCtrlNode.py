@@ -17,10 +17,10 @@ class MPCCtrlNode(Node):
         self.publisher_ = self.create_publisher(AckermannDriveStamped, '/ackermann_cmd', 10)
         
         self.get_logger().info("MPC Controller has been started")
-        self.get_logger().info('circular')
-        
-
+          
         self.trajectory_type = 'circular'
+        
+        self.get_logger().info(self.trajectory_type)
 
     def odom_callback(self, msg):
         x = msg.pose.pose.position.x
@@ -35,11 +35,9 @@ class MPCCtrlNode(Node):
 
         if self.trajectory_type == 'circular':
             X_ref = self.mpc.create_circular_trajectory(center_x=0, center_y=0, radius=1.5, start_theta=theta, N=10)
-            # Solve for optimal control
             optimal_accel, optimal_steer = self.mpc.solve_mpc(x, y, v, theta, X_ref)
         elif self.trajectory_type == 'straight':
             X_ref = self.mpc.create_straight_line_trajectory(start_x=x, start_y=y, start_theta=theta, end_x=x+5, end_y=y, N=10)
-            # Solve for optimal control
             optimal_accel, optimal_steer = self.mpc.solve_mpc(x, y, v, theta, X_ref)
         elif self.trajectory_type == 'pure_pursuit':
             optimal_accel, optimal_steer = self.mpc.followPurePursuit(current_state, lookahead_distance=0.7)
