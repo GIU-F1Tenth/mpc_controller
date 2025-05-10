@@ -12,9 +12,9 @@ class MPCCtrlNode(Node):
 
         self.mpc = MPC_Controller(N=10, T=1.0, L=0.33)
 
-        self.subscription = self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
+        self.subscription = self.create_subscription(Odometry, '/ego_racecar/odom', self.odom_callback, 10)
 
-        self.publisher_ = self.create_publisher(AckermannDriveStamped, '/ackermann_cmd', 10)
+        self.publisher_ = self.create_publisher(AckermannDriveStamped, '/drive', 10)
         
         self.get_logger().info("MPC Controller has been started")
           
