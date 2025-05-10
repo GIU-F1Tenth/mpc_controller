@@ -113,7 +113,7 @@ class MPC_Controller:
     
             return trajectory
         
-    def followPurePursuit(self, current_state, lookahead_distance=0.5, csv_path="mansour_3_out.csv"):
+    def followPurePursuit(self, current_state, lookahead_distance=0.5, csv_path="mpc_controller/mansour_3_out.csv"):
    
         # Load path with headers: x, y, v
         path = pd.read_csv(csv_path)

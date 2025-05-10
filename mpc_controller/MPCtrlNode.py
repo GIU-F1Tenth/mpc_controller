@@ -18,7 +18,10 @@ class MPCCtrlNode(Node):
         
         self.get_logger().info("MPC Controller has been started")
           
-        self.trajectory_type = 'circular'
+        #self.trajectory_type = 'straight'
+        #self.trajectory_type = 'circular'
+        self.trajectory_type = 'pure_pursuit'
+        
         
         self.get_logger().info(self.trajectory_type)
 
