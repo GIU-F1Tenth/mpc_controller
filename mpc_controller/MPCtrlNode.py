@@ -192,7 +192,7 @@ class MPCControllerNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = MPCCtrlNode()
+    node = MPCControllerNode()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
