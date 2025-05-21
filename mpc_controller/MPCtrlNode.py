@@ -37,7 +37,7 @@ def euler_from_quaternion(quat):
 class MPCControllerNode(Node):
     def __init__(self):
         super().__init__('mpc_controller')
-        self.declare_parameter("trajectory_file", "/my_ws/src/mpc_controller/mpc_controller/sansibarstr_out.csv")
+        self.declare_parameter("trajectory_file", "/home/mohammedazab/GIU_F1Tenth/mpc_controller/mpc_controller/mansour_3_out.csv")
         self.declare_parameter("rate", 20.0)
         self.declare_parameter('max_lookahead_distance', 2.0)
         self.declare_parameter('min_lookahead_distance', 0.8)
