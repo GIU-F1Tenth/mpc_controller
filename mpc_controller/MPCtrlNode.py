@@ -5,7 +5,7 @@ from nav_msgs.msg import Path, Odometry
 from geometry_msgs.msg import PoseStamped
 import numpy as np
 import pandas as pd
-from .MPC_Controller import MPC
+from mpc_controller.MPC_Controller import MPC_Controller as MPC
 from visualization_msgs.msg import Marker
 from pynput import keyboard
 import math
@@ -18,29 +18,21 @@ def read_trajectory_csv(file_path):
         "speed": df["v"].values,
     }
 
-def euler_from_quaternion(quaternion):
-    """
-    Converts quaternion (w in last place) to euler roll, pitch, yaw
-    quaternion = [x, y, z, w]
-    Bellow should be replaced when porting for ROS 2 Python tf_conversions is done.
-    """
-    x = quaternion[0]
-    y = quaternion[1]
-    z = quaternion[2]
-    w = quaternion[3]
-
+def euler_from_quaternion(quat):
+    x, y, z, w = quat
     sinr_cosp = 2 * (w * x + y * z)
     cosr_cosp = 1 - 2 * (x * x + y * y)
-    roll = np.arctan2(sinr_cosp, cosr_cosp)
+    roll = math.atan2(sinr_cosp, cosr_cosp)
 
     sinp = 2 * (w * y - z * x)
-    pitch = np.arcsin(sinp)
+    pitch = math.asin(sinp)
 
     siny_cosp = 2 * (w * z + x * y)
     cosy_cosp = 1 - 2 * (y * y + z * z)
-    yaw = np.arctan2(siny_cosp, cosy_cosp)
+    yaw = math.atan2(siny_cosp, cosy_cosp)
 
     return roll, pitch, yaw
+
 
 class MPCControllerNode(Node):
     def __init__(self):
@@ -49,7 +41,7 @@ class MPCControllerNode(Node):
         self.declare_parameter("rate", 20.0)
         self.declare_parameter('max_lookahead_distance', 2.0)
         self.declare_parameter('min_lookahead_distance', 0.8)
-        self.declare_parameter('max_velocity', 7.0)
+        self.declare_parameter('max_velocity', 7.0) 
         self.declare_parameter('min_velocity', 1.0)
 
         traj_path = self.get_parameter("trajectory_file").get_parameter_value().string_value
@@ -73,10 +65,7 @@ class MPCControllerNode(Node):
         self.activate_autonomous_vel = False 
         self.lookahead_dist = 1.5
 
-        listener = keyboard.Listener(
-            on_press=self.on_press,
-            on_release=self.on_release
-        )
+        listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
         listener.start()
 
     def on_press(self, key):
@@ -84,38 +73,23 @@ class MPCControllerNode(Node):
             if key.char == 'a':
                 self.activate_autonomous_vel = True 
         except AttributeError:
-            self.get_logger().warn("error while sending.. :(")
+            self.get_logger().warn("Error with keyboard input")
 
     def on_release(self, key):
-        # Stop the robot when the key is released
-        # self.start_algorithm = False
         self.activate_autonomous_vel = False
         if key == keyboard.Key.esc:
-            # Stop listener
             return False
-        
+
     def odom_callback(self, msg):
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
-        orientation_q = msg.pose.pose.orientation
-        orientation_list = [orientation_q.x, orientation_q.y, orientation_q.z, orientation_q.w]
-        _, _, yaw = euler_from_quaternion(orientation_list)
         v = msg.twist.twist.linear.x
-
+        quat = msg.pose.pose.orientation
+        _, _, yaw = euler_from_quaternion([quat.x, quat.y, quat.z, quat.w])
+        
         self.current_state = np.array([x, y, yaw, v])
         self.state_received = True
-        self.lookahead_dist = self.get_lad_thresh(v)
-
-    def get_lad_thresh(self, v):
-        # lad = m*v + c
-        m = (self.max_lad - self.min_lad)/(self.max_velocity - self.min_velocity)
-        c = self.max_lad - m * self.max_velocity
-        lad = m * v + c
-        if lad < self.min_lad:
-            lad = self.min_lad
-        if lad > self.max_lad:
-            lad = self.max_lad
-        return lad
+        self.get_logger().info(f"Odometry - X: {x:.2f}, Y: {y:.2f}, V: {v:.2f}, Yaw: {yaw:.2f}")
 
     def control_loop(self):
         if not self.state_received:
@@ -124,40 +98,52 @@ class MPCControllerNode(Node):
 
         self.publish_path()
         idx = self.find_lookahead_index(self.current_state[0], self.current_state[1])
+        if idx is None:
+            self.get_logger().warn("No valid lookahead point found.")
+            return
+
         x_lh = self.trajectory["x"][idx]
         y_lh = self.trajectory["y"][idx]
         self.publish_lookahead_marker(x_lh, y_lh)
 
-        u = self.mpc.solve(self.current_state, self.trajectory, idx)
-        self.publish_cmd(u)
+        # Reference trajectory for MPC (e.g., a window of N points ahead)
+        horizon = self.mpc.N if hasattr(self.mpc, 'N') else 10
+        x_ref = self.trajectory["x"][idx:idx + horizon]
+        y_ref = self.trajectory["y"][idx:idx + horizon]
+        v_ref = self.trajectory["speed"][idx:idx + horizon]
+        
+        if len(x_ref) < horizon:
+            self.get_logger().warn("End of trajectory reached.")
+            return
+
+        X_ref = np.vstack((x_ref, y_ref, v_ref))
+
+        try:
+            steer, accel = self.mpc.solve(self.current_state, X_ref)
+            self.publish_cmd([steer, accel])
+        except Exception as e:
+            self.get_logger().error(f"MPC solve failed: {e}")
+
+    def get_lad_thresh(self, v):
+        m = (self.max_lad - self.min_lad) / (self.max_velocity - self.min_velocity)
+        c = self.max_lad - m * self.max_velocity
+        lad = m * v + c
+        return np.clip(lad, self.min_lad, self.max_lad)
 
     def find_lookahead_index(self, x, y):
-        # find the closest point on the path from the car's position
+        min_dist = float('inf')
         closest_idx = 0
-        min_distance = float('inf')
         for i in range(len(self.trajectory["x"])):
-            dx = self.trajectory["x"][i] - x
-            dy = self.trajectory["y"][i] - y
-            dist = np.hypot(dx, dy)
-            if dist < min_distance:
-                min_distance = dist
+            dist = np.hypot(self.trajectory["x"][i] - x, self.trajectory["y"][i] - y)
+            if dist < min_dist:
+                min_dist = dist
                 closest_idx = i
-        # find the first point from the lookahead distance
+
         for i in range(closest_idx, len(self.trajectory["x"])):
-            dx = self.trajectory["x"][i] - x
-            dy = self.trajectory["y"][i] - y
-            dist = np.hypot(dx, dy)
+            dist = np.hypot(self.trajectory["x"][i] - x, self.trajectory["y"][i] - y)
             if dist >= self.lookahead_dist:
                 return i
-        # if no point is found search from the begining
-        closest_idx = 0
-        for i in range(closest_idx, len(self.trajectory["x"])):
-            dx = self.trajectory["x"][i] - x
-            dy = self.trajectory["y"][i] - y
-            dist = np.hypot(dx, dy)
-            if dist >= self.lookahead_dist:
-                return i
-        return None        
+        return None
 
     def publish_path(self):
         path_msg = Path()
@@ -183,7 +169,7 @@ class MPCControllerNode(Node):
         marker.action = Marker.ADD
         marker.pose.position.x = x
         marker.pose.position.y = y
-        marker.pose.position.z = 0.2  # slightly above ground
+        marker.pose.position.z = 0.2
         marker.pose.orientation.w = 1.0
         marker.scale.x = 0.3
         marker.scale.y = 0.3
@@ -194,22 +180,26 @@ class MPCControllerNode(Node):
         marker.color.b = 0.0
         self.lookahead_pub.publish(marker)
 
-
     def publish_cmd(self, u):
         cmd = AckermannDriveStamped()
         cmd.header.stamp = self.get_clock().now().to_msg()
         cmd.header.frame_id = "base_link"
         cmd.drive.steering_angle = float(u[0])
-        if self.activate_autonomous_vel:
-            cmd.drive.speed = float(u[1])/1.3
-        else:
-            cmd.drive.speed = 0.0
-        self.get_logger().info(f"Sending cmd: speed={u[1]:.2f}, steering={u[0]:.2f}")
+        cmd.drive.speed = float(u[1]) / 1.3 if self.activate_autonomous_vel else 0.0
+        self.get_logger().info(f"Command -> Speed: {cmd.drive.speed:.2f}, Steering: {cmd.drive.steering_angle:.2f}")
         self.cmd_pub.publish(cmd)
+
 
 def main(args=None):
     rclpy.init(args=args)
-    node = MPCControllerNode()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    node = MPCCtrlNode()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
