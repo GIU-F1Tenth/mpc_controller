@@ -82,7 +82,7 @@ class MPC_Controller:
 
     def create_circular_trajectory(self, center_x, center_y, radius, start_theta, N):
         trajectory = np.zeros((4, N+1))  # (x, y, velocity, theta)
-        target_velocity = 1.0  # m/s
+        target_velocity = 3.0  # m/s
         angular_velocity = target_velocity / radius  # Turn rate based on velocity
     
         for i in range(N+1):
