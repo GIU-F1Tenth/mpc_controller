@@ -18,9 +18,9 @@ class MPCCtrlNode(Node):
         
         self.get_logger().info("MPC Controller has been started")
           
-        #self.trajectory_type = 'straight'
-        self.trajectory_type = 'circular'
-        #self.trajectory_type = 'pure_pursuit'
+        #self.trajectory_type = 'straight'  
+        #self.trajectory_type = 'circular'
+        self.trajectory_type = 'pure_pursuit'
         
         
         self.get_logger().info(self.trajectory_type)
@@ -32,7 +32,7 @@ class MPCCtrlNode(Node):
         quat = msg.pose.pose.orientation
         _, _, theta = euler.quat2euler([quat.x, quat.y, quat.z, quat.w])
         
-        #self.get_logger().info(f"Odometry - X: {x}, Y: {y}, Velocity: {v}, Theta: {theta}")
+        self.get_logger().info(f"Odometry - X: {x}, Y: {y}, Velocity: {v}, Theta: {theta}")
         
         current_state = (x, y, v, theta)
 
