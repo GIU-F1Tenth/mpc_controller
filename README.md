@@ -1,81 +1,147 @@
+
 # Model Predictive Control (MPC) for ROS 2
 
-## 📌 Overview
-This repository implements a **Model Predictive Controller (MPC)** for an **F1TENTH autonomous car** using **ROS 2 (Humble)**. The controller optimizes acceleration and steering to follow a reference trajectory while considering vehicle dynamics.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![ROS2 Humble](https://img.shields.io/badge/ROS2-Humble-blue.svg)](https://docs.ros.org/en/humble/)
 
-The ALgo uses:
-- **CasADi** for solving the MPC optimization problem
-- **ROS 2** for communication with the F1TENTH car
-- **ackermann-msgs** for sending drive commands
+An advanced Model Predictive Controller (MPC) package for F1TENTH autonomous racing platforms, built on ROS 2 and CasADi. This package computes optimal control inputs (steering and acceleration) to follow a reference trajectory while respecting vehicle dynamics constraints.
 
-## Requirements
-- Python 3.x
-- Required packages: `CasADi`, `ackermann-msgs`
+---
 
-## 🛠 Installation
-Ensure you have **ROS 2 Humble** installed. Then, install required dependencies:
+## ✨ Features
 
+- **Kinematic Bicycle Model** for accurate vehicle dynamics
+- **Real-Time Optimization** using CasADi
+- **Ackermann Drive Support** with `ackermann_msgs`
+- **Configurable Horizon & Cost Weights**
+- **ROS 2 Integration** with publishers/subscribers
+- **Launch-ready** via ROS 2 launch files
+
+---
+
+## 🛠 System Requirements
+
+- ROS 2 Humble or later
+- Python 3.8+
+- `casadi`, `numpy`, `matplotlib`
+- `ackermann_msgs` ROS 2 interface
+
+---
+
+## 📦 Installation
+
+### 1. Clone the package into your ROS 2 workspace:
+```bash
+cd ~/ros2_ws/src
+git clone <repo-url> mpc_controller
+```
+
+### 2. Install Python and ROS dependencies:
+```bash
+cd ~/ros2_ws
+rosdep install --from-paths src --ignore-src -r -y
+pip install -r src/mpc_controller/requirements.txt
+```
+
+> Or install manually:
 ```bash
 pip install casadi numpy matplotlib
 sudo apt install ros-humble-ackermann-msgs
 ```
 
-or you can use the requirements file:
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-## 📂 Repository Structure
-```
-mpc_controller/
-│ 
-│── src/
-│   ├── mpc_controller.py    
-│   ├── utils.py
-│      
-│── launch/
-│   ├── mpc_controller.launch.py
-│── requirements.txt
-│
-│── README.md                
+### 3. Build the package:
+```bash
+colcon build --packages-select mpc_controller
+source install/setup.bash
 ```
 
-## 📖 Mathematical Model
-### 🚗 **Bicycle Model**
-The vehicle dynamics are modeled using the **kinematic bicycle model**:
+---
+
+## 🚀 Usage
+
+### 🔹 Launch in Simulation
+
+```bash
+ros2 launch mpc_controller mpc_controller.launch.py
+```
+
+### 🔹 Run Node Directly
+
+```bash
+ros2 run mpc_controller MPC_Node
+```
+
+---
+
+## ⚙️ Configuration
+
+MPC parameters (like horizon length, weights, etc.) are configurable via YAML or directly in the code. You can modify:
+
+- Prediction horizon `N`
+- Time step `dt`
+- Cost function weights
+- Vehicle parameters (L, max steering angle, etc.)
+
+---
+
+## 📖 MPC Model
+
+### 🔸 Vehicle Model – Kinematic Bicycle Model
 
 ![Bicycle Model](resource/ModelEquation.png)
 
+### 🔸 Cost Function
 
-### 🎯 **MPC Optimization Problem**
-MPC minimizes the cost function:
+The MPC minimizes a weighted cost function of position error, heading error, and control effort:
 
 ![Cost Function](resource/costFunction.png)
 
-subject to vehicle dynamics constraints.
+Subject to vehicle dynamics and constraints on steering, acceleration, etc.
 
-## Running the Controller
-1️⃣ **Launch the F1TENTH simulator:**
-```bash
-ros2 launch f1tenth_simulator simulator.launch.py
+---
+
+## 📂 Project Structure
+
+```
+mpc_controller/
+├── launch/
+│   └── mpc_controller.launch.py
+├── resource/
+│   ├── ModelEquation.png
+│   └── costFunction.png
+├── src/
+│   ├── mpc_controller/
+│   │   ├── __init__.py
+│   │   ├── MPCtrlNode.py
+│   │   ├── controller.py
+│   │   └── utils.py
+├── test/
+├── package.xml
+├── setup.py
+└── README.md
 ```
 
-2️⃣ **Run the MPC controller:**
+---
+
+## 🧪 Testing
+
 ```bash
-python3 src/mpc_controller.py
+colcon test --packages-select mpc_controller
 ```
 
-## 📌 Future Improvements
-- [ ] Implement obstacle avoidance
-- [ ] Improve real-time performance
-- [ ] Test on a physical F1TENTH car
+---
+
+## 🔭 Future Work
+- Implement obstacle avoidance
+- Improve real-time performance
+- Test on physical F1TENTH platform
+
+---
 
 ## 📜 License
+
 This project is open-source under the **MIT License**.
 
 ---
-For questions, contact **Mohammed Azab** 🚀.
 
-
-
+For questions, contact **Mohammed Azab (Mohammed@azab.io)** 🚀.

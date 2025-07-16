@@ -1,0 +1,36 @@
+mpc_controller:
+  ros__parameters:
+    # Trajectory settings
+    trajectory_type: "pure_pursuit"
+    lookahead_distance: 0.7
+    wheelbase: 0.33
+
+    # MPC Horizon
+    horizon_N: 10
+    horizon_T: 1.0
+
+    # Vehicle limits
+    max_steering_angle: 0.5
+    max_acceleration: 1.0
+    max_deceleration: 1.0
+    min_speed: 0.1
+    max_speed: 2.0
+
+    # Obstacle avoidance
+    enable_obstacle_avoidance: true
+    obstacle_avoidance_weight: 0.5
+
+    # Speed control
+    enable_speed_control: true
+    speed_control_weight: 0.3
+
+    # Trajectory tracking
+    enable_trajectory_tracking: true
+    trajectory_tracking_weight: 0.2
+
+    # Safety checks
+    enable_safety_checks: true
+    safety_check_distance: 0.5
+
+    # Logging
+    enable_logging: true

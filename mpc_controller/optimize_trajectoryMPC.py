@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from mpc_controller.MPC_Controller import MPC_Controller  
+from mpc_controller.mpc_controller import MPC_Controller  
 import math
 
 def estimate_theta_from_xy(x, y):

@@ -2,11 +2,20 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>mpc_controller</name>
-  <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="fam@awadlouis.com">fam</maintainer>
-  <license>TODO: License declaration</license>
+  <version>1.0.0</version>
+  <description>Model Predictive Control (MPC) package for autonomous systems using CasADi.</description>
 
+  <maintainer email="Mohammed@azab.io">Mohammed_Azab</maintainer>
+  <license>MIT</license>
+
+  <!-- Runtime dependencies -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>casadi</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+
+  <!-- Test dependencies -->
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>
