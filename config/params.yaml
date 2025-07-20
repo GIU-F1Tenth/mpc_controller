@@ -1,13 +1,17 @@
 mpc_controller:
   ros__parameters:
     # Trajectory settings
-    trajectory_type: "pure_pursuit"
-    lookahead_distance: 0.7
+    enable_trajectory_generation: true
+    optimal_trajectory_path: "/home/mohammedazab/ws/src/race_stack/myDev/mpc_controller/trajectory/optimal_trajectory.csv"
+    reference_trajectory_path: "/home/mohammedazab/ws/src/race_stack/myDev/mpc_controller/trajectory/ref_trajectory.csv"
+
+    # Vehicle parameters
     wheelbase: 0.33
 
     # MPC Horizon
     horizon_N: 10
     horizon_T: 1.0
+    lookahead_distance: 0.7
 
     # Vehicle limits
     max_steering_angle: 0.5
@@ -16,8 +20,25 @@ mpc_controller:
     min_speed: 0.1
     max_speed: 2.0
 
+    # Cost function weights
+    enable_cost_function_weights: true
+    cost_function_weights:
+      steering_weight: 0.1
+      acceleration_weight: 0.1
+      jerk_weight: 0.1
+      heading_weight: 0.1
+      position_weight: 0.1
+      velocity_weight: 0.1
+
+    # Hard constraints
+    enable_hard_constraints: true
+    hard_constraints:
+      max_steering_angle: 0.5
+      max_acceleration: 1.0
+      max_deceleration: 1.0
+
     # Obstacle avoidance
-    enable_obstacle_avoidance: true
+    enable_obstacle_avoidance: false
     obstacle_avoidance_weight: 0.5
 
     # Speed control
