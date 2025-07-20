@@ -6,15 +6,18 @@ package_name = 'mpc_controller'
 
 setup(
     name=package_name,
-    version='0.0.0',
+    version='1.0.0',
     packages=find_packages(exclude=['test']),
     data_files=[
         ('share/ament_index/resource_index/packages',
             [f'resource/{package_name}']),
         (f'share/{package_name}', ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
+        (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'trajectory'), glob('trajectory/*.py')),
+        (os.path.join('share', package_name, 'trajectory'), glob('trajectory/*.csv')),
     ],
-    install_requires=['setuptools', 'casadi'],
+    install_requires=['setuptools', 'casadi', 'numpy', 'pyyaml'],
     zip_safe=True,
     maintainer='Mohammed Azab',
     maintainer_email='mohammed@azab.io',
@@ -24,6 +27,7 @@ setup(
     entry_points={
         'console_scripts': [
             'MPC_Node = mpc_controller.MPCtrlNode:main',
+            'trajectory_publisher_node = trajectory.trajectory_publisher_node:main',
         ],
     },
 )
