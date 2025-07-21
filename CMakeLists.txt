@@ -5,34 +5,33 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# --- Dependencies ---
+# Find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 find_package(rclpy REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
-find_package(rosidl_default_generators REQUIRED)
 
-# --- Custom Messages ---
-rosidl_generate_interfaces(${PROJECT_NAME}
-  "msg/VehicleState.msg"
-  "msg/VehicleStateArray.msg"
-  DEPENDENCIES std_msgs geometry_msgs
-)
-
-ament_export_dependencies(rosidl_default_runtime)
-
-# --- Install Python Modules ---
+# Install Python modules
 ament_python_install_package(${PROJECT_NAME})
 
-# --- Install Executables ---
+# Install Python executables
 install(PROGRAMS
-  ${PROJECT_NAME}/mpc_controller.py
+  trajectory/trajectory_publisher_node.py
   DESTINATION lib/${PROJECT_NAME}
+  RENAME trajectory_publisher_node
 )
 
-# --- Testing ---
+# Install data files
+install(DIRECTORY
+  config
+  trajectory
+  DESTINATION share/${PROJECT_NAME}
+  PATTERN "*.pyc" EXCLUDE
+  PATTERN "__pycache__" EXCLUDE
+)
+
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()

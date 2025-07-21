@@ -1,7 +1,7 @@
 from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Bool
-from mpc_controller.msg import VehicleState, VehicleStateArray
+from giu_f1t_interfaces.msg import VehicleState, VehicleStateArray
 
 from preprocess_trajectory import preprocess_trajectory, find_config_file, load_ros2_params
 
