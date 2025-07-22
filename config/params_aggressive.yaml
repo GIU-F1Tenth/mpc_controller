@@ -1,0 +1,69 @@
+optimized_mpc_controller:
+  ros__parameters:
+    # Trajectory settings
+    enable_trajectory_generation: true
+    optimal_trajectory_path: "/home/mohammedazab/ws/src/race_stack/myDev/mpc_controller/trajectory/optimal_trajectory.csv"
+    reference_trajectory_path: "/home/mohammedazab/ws/src/race_stack/myDev/mpc_controller/trajectory/reference_trajectory.csv"
+
+    # Vehicle parameters
+    wheelbase: 0.33
+
+    # MPC Horizon - Shorter for faster optimized response
+    horizon_N: 8
+    horizon_T: 0.8
+    lookahead_distance: 0.5
+
+    # Vehicle limits - More aggressive optimized settings
+    max_steering_angle: 0.6
+    max_acceleration: 2.0
+    max_deceleration: 2.5
+    min_speed: 0.2
+    max_speed: 8.0
+
+    # Cost function weights - Optimized for speed
+    enable_cost_function_weights: true
+    cost_function_weights:
+      steering_weight: 0.05 # Lower penalty for aggressive steering
+      acceleration_weight: 0.05 # Lower penalty for aggressive acceleration
+      jerk_weight: 0.2 # Higher penalty for jerky motion
+      heading_weight: 0.15 # Higher penalty for heading error
+      position_weight: 0.2 # Higher penalty for position error
+      velocity_weight: 0.05 # Lower penalty for velocity tracking
+
+    # Hard constraints - Optimized for racing performance
+    enable_hard_constraints: true
+    hard_constraints:
+      max_steering_angle: 0.6
+      max_acceleration: 2.0
+      max_deceleration: 2.5
+
+    # Optimized racing features
+    enable_obstacle_avoidance: true
+    obstacle_avoidance_weight: 1.0
+    enable_speed_control: true
+    speed_control_weight: 0.1 # Lower weight for aggressive speed
+    enable_trajectory_tracking: true
+    trajectory_tracking_weight: 0.3
+    enable_safety_checks: true
+    safety_check_distance: 0.3 # Closer safety distance for racing
+
+    # Logging
+    enable_logging: true
+
+    # Optimized MPC parameters - Use dynamic model for racing
+    mpc_type: "dynamic"
+    solver_type: "ipopt"
+    control_hz: 30.0 # Higher control frequency for optimized performance
+
+    # Safety Parameters - Optimized for racing
+    safety_timeout: 0.5
+    emergency_brake_threshold: 1.5
+
+    # Topics
+    odom_topic: "/odom"
+    reference_topic: "/mpc/reference_trajectory"
+    status_topic: "/mpc/path_ready"
+    control_topic: "/drive"
+
+    # QoS
+    qos_depth: 10

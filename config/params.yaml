@@ -1,9 +1,9 @@
-mpc_controller:
+optimized_mpc_controller:
   ros__parameters:
     # Trajectory settings
     enable_trajectory_generation: true
     optimal_trajectory_path: "/home/mohammedazab/ws/src/race_stack/myDev/mpc_controller/trajectory/optimal_trajectory.csv"
-    reference_trajectory_path: "/home/mohammedazab/ws/src/race_stack/myDev/mpc_controller/trajectory/ref_trajectory.csv"
+    reference_trajectory_path: "/home/mohammedazab/ws/src/race_stack/myDev/mpc_controller/trajectory/reference_trajectory.csv"
 
     # Vehicle parameters
     wheelbase: 0.33
@@ -55,3 +55,21 @@ mpc_controller:
 
     # Logging
     enable_logging: true
+
+    # Optimized MPC parameters
+    mpc_type: "kinematic" # "kinematic" or "dynamic"
+    solver_type: "ipopt" # "ipopt" or "sqpmethod"
+    control_hz: 20.0
+
+    # Safety Parameters
+    safety_timeout: 1.0
+    emergency_brake_threshold: 2.0
+
+    # Topics
+    odom_topic: "/odom"
+    reference_topic: "/mpc/reference_trajectory"
+    status_topic: "/mpc/path_ready"
+    control_topic: "/drive"
+
+    # QoS
+    qos_depth: 10
