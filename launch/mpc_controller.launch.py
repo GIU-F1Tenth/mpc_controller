@@ -64,3 +64,9 @@ def generate_launch_description():
         trajectory_publisher_node,
         mpc_node
     ])
+
+
+# ros2 launch mpc_controller mpc_controller.launch.py
+# ros2 launch mpc_controller mpc_controller.launch.py config:=params_aggressive
+# ros2 launch mpc_controller mpc_controller.launch.py config:=params_conservative
+# ros2 launch mpc_controller mpc_controller.launch.py config:=params_precision
