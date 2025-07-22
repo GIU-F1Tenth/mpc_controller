@@ -1,5 +1,5 @@
-from nav_msgs.msg import Path
-from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Path, Odometry
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from std_msgs.msg import Bool
 from giu_f1t_interfaces.msg import VehicleState, VehicleStateArray
 
@@ -9,6 +9,8 @@ import rclpy
 from rclpy.node import Node
 import csv
 import os
+import numpy as np
+from tf_transformations import euler_from_quaternion
 
 
 class TrajectoryPublisherNode(Node):
@@ -25,6 +27,14 @@ class TrajectoryPublisherNode(Node):
         self.get_logger().info(f"Loading config from: {config_path}")
         self.params = load_ros2_params(config_path)
 
+        # Get logging configuration
+        self.enable_logging = self.params.get('enable_logging', True)
+
+        if self.enable_logging:
+            self.get_logger().info("Detailed logging enabled")
+        else:
+            self.get_logger().info("Detailed logging disabled - only warnings and errors will be shown")
+
         # Get paths from config
         self.input_path = self.params.get('optimal_trajectory_path')
         self.output_path = self.params.get('reference_trajectory_path')
@@ -35,8 +45,25 @@ class TrajectoryPublisherNode(Node):
             return
 
         # State variables
-        self.trajectory = []
+        self.reference_trajectory = []
         self.path_ready = False
+        self.current_vehicle_state = VehicleState()
+        self.current_pose_estimate = None
+        self.trajectory_index = 0
+
+        # Subscribers
+        self.odom_sub = self.create_subscription(
+            Odometry,
+            '/odom',
+            self.odometry_callback,
+            10)
+
+        # Subscribe to RViz 2D Pose Estimate
+        self.pose_sub = self.create_subscription(
+            PoseWithCovarianceStamped,
+            '/initialpose',
+            self.pose_estimate_callback,
+            10)
 
         # Publishers
         self.path_pub = self.create_publisher(
@@ -55,24 +82,82 @@ class TrajectoryPublisherNode(Node):
             10)
 
         # Timers
-        self.publish_timer = self.create_timer(0.3, self.publish_data)  # 1 Hz
+        self.publish_timer = self.create_timer(0.1, self.publish_predictive_trajectory)  # 10 Hz for MPC
 
         # Run preprocessing on startup
         self.preprocess_and_load_trajectory()
 
+    def log_info(self, message):
+        """Log info messages only if logging is enabled"""
+        if self.enable_logging:
+            self.get_logger().info(message)
+
+    def log_debug(self, message):
+        """Log debug messages only if logging is enabled"""
+        if self.enable_logging:
+            self.get_logger().debug(message)
+
+    def odometry_callback(self, msg):
+        """Update current vehicle state from odometry"""
+        try:
+            # Extract position
+            self.current_vehicle_state.x = msg.pose.pose.position.x
+            self.current_vehicle_state.y = msg.pose.pose.position.y
+
+            # Extract velocity (assuming this is in body frame)
+            linear_velocity = msg.twist.twist.linear
+            self.current_vehicle_state.v = np.sqrt(linear_velocity.x**2 + linear_velocity.y**2)
+
+            # Extract yaw from quaternion (for future steering calculations)
+            orientation_q = msg.pose.pose.orientation
+            _, _, yaw = euler_from_quaternion([
+                orientation_q.x, orientation_q.y, orientation_q.z, orientation_q.w
+            ])
+
+            # For now, set delta to 0 (we'll calculate this from trajectory tracking)
+            self.current_vehicle_state.delta = 0.0
+
+            self.log_debug(f"Odometry update: x={self.current_vehicle_state.x:.2f}, "
+                           f"y={self.current_vehicle_state.y:.2f}, "
+                           f"v={self.current_vehicle_state.v:.2f}")
+
+        except Exception as e:
+            self.get_logger().error(f"Error processing odometry: {str(e)}")
+
+    def pose_estimate_callback(self, msg):
+        """Update pose estimate from RViz 2D Pose Estimate tool"""
+        try:
+            self.current_pose_estimate = msg
+
+            # Use pose estimate to correct vehicle state
+            self.current_vehicle_state.x = msg.pose.pose.position.x
+            self.current_vehicle_state.y = msg.pose.pose.position.y
+
+            # Extract yaw from quaternion for heading
+            orientation_q = msg.pose.pose.orientation
+            _, _, yaw = euler_from_quaternion([
+                orientation_q.x, orientation_q.y, orientation_q.z, orientation_q.w
+            ])
+
+            self.log_info(f"Pose estimate from RViz: x={self.current_vehicle_state.x:.2f}, "
+                          f"y={self.current_vehicle_state.y:.2f}, yaw={yaw:.2f}")
+
+        except Exception as e:
+            self.get_logger().error(f"Error processing pose estimate: {str(e)}")
+
     def preprocess_and_load_trajectory(self):
         """Run preprocessing script and load trajectory"""
         try:
-            self.get_logger().info("Starting trajectory preprocessing...")
+            self.log_info("Starting trajectory preprocessing...")
 
             # Run the preprocessing script
             success = preprocess_trajectory(self.input_path, self.output_path)
 
             if success:
-                self.get_logger().info("Preprocessing completed successfully")
-                self.trajectory = self.load_trajectory_from_csv(self.output_path)
+                self.log_info("Preprocessing completed successfully")
+                self.reference_trajectory = self.load_trajectory_from_csv(self.output_path)
                 self.path_ready = True
-                self.get_logger().info(f"Trajectory loaded: {len(self.trajectory)} points")
+                self.log_info(f"Reference trajectory loaded: {len(self.reference_trajectory)} points")
             else:
                 self.get_logger().error("Preprocessing failed")
                 self.path_ready = False
@@ -101,10 +186,59 @@ class TrajectoryPublisherNode(Node):
                         state.delta = 0.0
                     data.append(state)
 
-            self.get_logger().info(f"Loaded {len(data)} trajectory points")
+            self.log_info(f"Loaded {len(data)} trajectory points")
         except Exception as e:
             self.get_logger().error(f"Failed to load trajectory: {str(e)}")
         return data
+
+    def find_closest_trajectory_point(self):
+        """Find the closest point on the reference trajectory to current position"""
+        if not self.reference_trajectory:
+            return 0
+
+        min_distance = float('inf')
+        closest_index = 0
+
+        current_x = self.current_vehicle_state.x
+        current_y = self.current_vehicle_state.y
+
+        for i, point in enumerate(self.reference_trajectory):
+            distance = np.sqrt((point.x - current_x)**2 + (point.y - current_y)**2)
+            if distance < min_distance:
+                min_distance = distance
+                closest_index = i
+
+        return closest_index
+
+    def create_predictive_trajectory(self):
+        """Create predictive trajectory horizon starting from closest reference point"""
+        if not self.reference_trajectory:
+            return VehicleStateArray()
+
+        # Find closest point on reference trajectory
+        closest_index = self.find_closest_trajectory_point()
+
+        # Create trajectory array for MPC horizon
+        trajectory_msg = VehicleStateArray()
+
+        # Start with current vehicle state as first point
+        trajectory_msg.states.append(self.current_vehicle_state)
+
+        # Add reference trajectory points for the prediction horizon
+        for i in range(1, self.horizon):
+            ref_index = (closest_index + i) % len(self.reference_trajectory)
+            ref_point = self.reference_trajectory[ref_index]
+
+            # Create predicted state
+            predicted_state = VehicleState()
+            predicted_state.x = ref_point.x
+            predicted_state.y = ref_point.y
+            predicted_state.v = ref_point.v
+            predicted_state.delta = ref_point.delta
+
+            trajectory_msg.states.append(predicted_state)
+
+        return trajectory_msg
 
     def create_path_msg(self):
         """Create Path message for RViz visualization"""
@@ -112,7 +246,7 @@ class TrajectoryPublisherNode(Node):
         path_msg.header.frame_id = "map"
         path_msg.header.stamp = self.get_clock().now().to_msg()
 
-        for state in self.trajectory:
+        for state in self.reference_trajectory:
             pose = PoseStamped()
             pose.header.frame_id = "map"
             pose.header.stamp = path_msg.header.stamp
@@ -124,32 +258,34 @@ class TrajectoryPublisherNode(Node):
 
         return path_msg
 
-    def create_trajectory_msg(self):
-        """Create VehicleStateArray message for MPC"""
-        trajectory_msg = VehicleStateArray()
-        # Send full trajectory or horizon-limited trajectory
-        trajectory_msg.states = self.trajectory[:self.horizon] if len(
-            self.trajectory) > self.horizon else self.trajectory
-        return trajectory_msg
-
-    def publish_data(self):
-        """Publish all trajectory data"""
+    def publish_predictive_trajectory(self):
+        """Publish predictive trajectory for MPC and status"""
         # Always publish status
         status_msg = Bool()
         status_msg.data = self.path_ready
         self.status_pub.publish(status_msg)
 
-        # Only publish trajectory data if ready
-        if self.path_ready and len(self.trajectory) > 0:
-            # Publish path for RViz
-            path_msg = self.create_path_msg()
-            self.path_pub.publish(path_msg)
+        # Only publish trajectory data if ready and we have current state
+        if self.path_ready and len(self.reference_trajectory) > 0:
+            # Publish full reference path for RViz (less frequent)
+            if self.get_clock().now().nanoseconds % 1000000000 < 100000000:  # ~10% of the time
+                path_msg = self.create_path_msg()
+                self.path_pub.publish(path_msg)
+                self.log_debug("Published reference path for RViz visualization")
 
-            # Publish trajectory for MPC
-            trajectory_msg = self.create_trajectory_msg()
-            self.trajectory_pub.publish(trajectory_msg)
+            # Always publish predictive trajectory for MPC
+            trajectory_msg = self.create_predictive_trajectory()
+            if len(trajectory_msg.states) > 0:
+                self.trajectory_pub.publish(trajectory_msg)
 
-            self.get_logger().debug(f"Published trajectory data: {len(self.trajectory)} points")
+                self.log_debug(
+                    f"Published predictive trajectory: {len(trajectory_msg.states)} points, "
+                    f"current pos: ({self.current_vehicle_state.x:.2f}, {self.current_vehicle_state.y:.2f}), "
+                    f"closest ref idx: {self.find_closest_trajectory_point()}")
+
+    def publish_data(self):
+        """Legacy method - kept for compatibility"""
+        self.publish_predictive_trajectory()
 
 
 def main(args=None):
@@ -159,7 +295,7 @@ def main(args=None):
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        pass
+        node.log_info("Trajectory publisher node shutting down...")
     finally:
         node.destroy_node()
         rclpy.shutdown()
