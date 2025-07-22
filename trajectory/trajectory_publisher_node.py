@@ -54,7 +54,7 @@ class TrajectoryPublisherNode(Node):
         # Subscribers
         self.odom_sub = self.create_subscription(
             Odometry,
-            '/odom',
+            '/car_state_odom',
             self.odometry_callback,
             10)
 
