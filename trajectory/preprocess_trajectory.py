@@ -84,13 +84,20 @@ def load_ros2_params(config_path):
             config = yaml.safe_load(f)
 
         # Extract mpc_controller parameters
-        mpc_params = config.get('mpc_controller', {}).get('ros__parameters', {})
+        if 'optimized_mpc_controller' in config:
+            mpc_params = config.get('optimized_mpc_controller', {}).get('ros__parameters', {})
+        elif 'mpc_controller' in config:
+            mpc_params = config.get('mpc_controller', {}).get('ros__parameters', {})
+        else:
+            mpc_params = {}
 
         return {
             'optimal_trajectory_path': mpc_params.get('optimal_trajectory_path'),
             'reference_trajectory_path': mpc_params.get('reference_trajectory_path'),
             'wheelbase': mpc_params.get('wheelbase', 0.33),
             'max_steering_angle': mpc_params.get('max_steering_angle', 0.5),
+            'enable_logging': mpc_params.get('enable_logging', True),
+            'horizon_N': mpc_params.get('horizon_N', 10)
         }
     except Exception as e:
         print(f"[✗] Error loading ROS2 config: {e}")

@@ -3,7 +3,7 @@ from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from std_msgs.msg import Bool
 from giu_f1t_interfaces.msg import VehicleState, VehicleStateArray
 
-from preprocess_trajectory import preprocess_trajectory, find_config_file, load_ros2_params
+from .preprocess_trajectory import preprocess_trajectory
 
 import rclpy
 from rclpy.node import Node
@@ -18,31 +18,37 @@ class TrajectoryPublisherNode(Node):
     def __init__(self):
         super().__init__('trajectory_publisher_node')
 
-        # Load configuration from params.yaml
-        config_path = find_config_file()
-        if not config_path:
-            self.get_logger().error("Could not find config/params.yaml file!")
-            return
+        # Declare ROS2 parameters
+        self.declare_parameter('enable_logging', True)
+        self.declare_parameter(
+            'optimal_trajectory_path',
+            '/home/mohammedazab/ws/src/race_stack/myDev/mpc_controller/trajectory/optimal_trajectory.csv')
+        self.declare_parameter('reference_trajectory_path',
+                               '/home/mohammedazab/ws/src/race_stack/myDev/mpc_controller/trajectory/ref_trajectory.csv')
+        self.declare_parameter('horizon_N', 10)
+        self.declare_parameter('wheelbase', 0.33)
+        self.declare_parameter('max_steering_angle', 0.5)
 
-        self.get_logger().info(f"Loading config from: {config_path}")
-        self.params = load_ros2_params(config_path)
-
-        # Get logging configuration
-        self.enable_logging = self.params.get('enable_logging', True)
+        # Load parameters from ROS2 parameter server
+        self.enable_logging = self.get_parameter('enable_logging').value
+        self.input_path = self.get_parameter('optimal_trajectory_path').value
+        self.output_path = self.get_parameter('reference_trajectory_path').value
+        self.horizon = self.get_parameter('horizon_N').value
+        self.wheelbase = self.get_parameter('wheelbase').value
+        self.max_steering = self.get_parameter('max_steering_angle').value
 
         if self.enable_logging:
             self.get_logger().info("Detailed logging enabled")
         else:
             self.get_logger().info("Detailed logging disabled - only warnings and errors will be shown")
 
-        # Get paths from config
-        self.input_path = self.params.get('optimal_trajectory_path')
-        self.output_path = self.params.get('reference_trajectory_path')
-        self.horizon = self.params.get('horizon_N', 10)
-
         if not self.input_path or not self.output_path:
-            self.get_logger().error("Missing trajectory paths in config file!")
+            self.get_logger().error("Missing trajectory paths in parameters!")
             return
+
+        self.get_logger().info(f"Input trajectory: {self.input_path}")
+        self.get_logger().info(f"Output trajectory: {self.output_path}")
+        self.get_logger().info(f"Horizon: {self.horizon} steps")
 
         # State variables
         self.reference_trajectory = []
@@ -150,8 +156,13 @@ class TrajectoryPublisherNode(Node):
         try:
             self.log_info("Starting trajectory preprocessing...")
 
-            # Run the preprocessing script
-            success = preprocess_trajectory(self.input_path, self.output_path)
+            # Run the preprocessing script with parameters
+            success = preprocess_trajectory(
+                self.input_path,
+                self.output_path,
+                wheelbase=self.wheelbase,
+                max_steering=self.max_steering
+            )
 
             if success:
                 self.log_info("Preprocessing completed successfully")
