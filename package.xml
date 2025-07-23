@@ -13,6 +13,9 @@
   <build_depend>std_msgs</build_depend>
   <build_depend>geometry_msgs</build_depend>
   <build_depend>nav_msgs</build_depend>
+  <build_depend>giu_f1t_interfaces</build_depend>
+  <build_depend>ackermann_msgs</build_depend>
+  <build_depend>diagnostic_msgs</build_depend>
 
   <!-- Runtime dependencies -->
   <exec_depend>rclpy</exec_depend>
@@ -20,6 +23,10 @@
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
+  <exec_depend>giu_f1t_interfaces</exec_depend>
+  <exec_depend>ackermann_msgs</exec_depend>
+  <exec_depend>diagnostic_msgs</exec_depend>
+  <exec_depend>tf_transformations</exec_depend>
 
   <!-- Test dependencies -->
   <test_depend>ament_copyright</test_depend>
