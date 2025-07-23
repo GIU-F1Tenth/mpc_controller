@@ -11,6 +11,7 @@ from .dynamic_bicycle_model import (
     DynamicBicycleModel, DynamicCostFunction, DynamicConstraintsManager
 )
 
+
 class SolverConfiguration:
     """Solver configuration for optimal performance"""
 
@@ -236,9 +237,11 @@ class OptimizedMPCController:
         # Dynamics constraints
         for i in range(self.N):
             if self.mpc_type == MPCType.KINEMATIC:
-                x_next = self.dynamics(self.X[:, i], self.U[:, i])
+                x_next = self.dynamics(self.X[0, i], self.X[1, i], self.X[2, i], self.X[3, i],
+                                       self.U[0, i], self.U[1, i])
             else:  # DYNAMIC
-                x_next = self.dynamics(self.X[:, i], self.U[:, i])
+                x_next = self.dynamics(self.X[0, i], self.X[1, i], self.X[2, i], self.X[3, i],
+                                       self.X[4, i], self.X[5, i], self.U[0, i], self.U[1, i])
             self.opti.subject_to(self.X[:, i + 1] == x_next)
 
         # Apply constraints

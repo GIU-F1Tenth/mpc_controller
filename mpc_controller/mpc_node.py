@@ -41,7 +41,7 @@ class MPCNode(Node):
         self._setup_publishers()
         self._setup_timers()
 
-        self.get_logger().info("🏎️ F1TENTH Optimized MPC Node with All Parameters started successfully")
+        self.get_logger().info("MPC Node has been started 🏎️ ")
 
     def _declare_all_parameters(self):
         """Declare all ROS2 parameters from params.yaml"""
@@ -114,6 +114,7 @@ class MPCNode(Node):
         self.declare_parameter('reference_topic', '/mpc/reference_trajectory')
         self.declare_parameter('status_topic', '/mpc/path_ready')
         self.declare_parameter('control_topic', '/drive')
+        self.declare_parameter('pose_estimate_topic', '/initialpose')
 
         # QoS
         self.declare_parameter('qos_depth', 10)
@@ -194,6 +195,7 @@ class MPCNode(Node):
         self.reference_topic = self.get_parameter('reference_topic').value
         self.status_topic = self.get_parameter('status_topic').value
         self.control_topic = self.get_parameter('control_topic').value
+        self.pose_estimate_topic = self.get_parameter('pose_estimate_topic').value
 
         self.qos_depth = self.get_parameter('qos_depth').value
 
@@ -246,6 +248,10 @@ class MPCNode(Node):
         self.current_yaw = 0.0
         self.current_steering_angle = 0.0
 
+        # RViz 2D Pose Estimate for debugging/validation
+        self.rviz_pose_estimate = None
+        self.last_pose_estimate_time = None
+
         # Additional states for dynamic model
         self.current_beta = 0.0  # Sideslip angle
         self.current_yaw_rate = 0.0
@@ -287,6 +293,14 @@ class MPCNode(Node):
             Bool,
             self.status_topic,
             self._status_callback,
+            self.qos_depth
+        )
+
+        # RViz 2D Pose Estimate subscription for debugging/validation
+        self.create_subscription(
+            PoseStamped,
+            self.pose_estimate_topic,
+            self._pose_estimate_callback,
             self.qos_depth
         )
 
@@ -387,6 +401,35 @@ class MPCNode(Node):
     def _status_callback(self, msg: Bool):
         """Process path ready status"""
         self.path_ready = msg.data
+
+    def _pose_estimate_callback(self, msg: PoseStamped):
+        """Process RViz 2D Pose Estimate for debugging/validation"""
+
+        self.rviz_pose_estimate = msg.pose
+        self.last_pose_estimate_time = self.get_clock().now()
+
+        # Log pose difference for debugging if logging is enabled
+        if self.enable_logging and self.current_pose is not None:
+            # Calculate position difference
+            pos_diff_x = msg.pose.position.x - self.current_pose.position.x
+            pos_diff_y = msg.pose.position.y - self.current_pose.position.y
+            pos_diff_magnitude = np.sqrt(pos_diff_x**2 + pos_diff_y**2)
+
+            # Calculate yaw difference
+            rviz_orientation = msg.pose.orientation
+            _, _, rviz_yaw = euler_from_quaternion([
+                rviz_orientation.x, rviz_orientation.y, rviz_orientation.z, rviz_orientation.w
+            ])
+            yaw_diff = np.abs(rviz_yaw - self.current_yaw)
+            if yaw_diff > np.pi:
+                yaw_diff = 2 * np.pi - yaw_diff
+
+            # Log significant differences (> 10cm position or > 5 degrees heading)
+            if pos_diff_magnitude > 0.1 or yaw_diff > np.radians(5):
+                self.get_logger().info(
+                    f"🎯 Pose difference - Position: {pos_diff_magnitude:.3f}m, "
+                    f"Heading: {np.degrees(yaw_diff):.1f}°"
+                )
 
     def _control_loop(self):
         """Main MPC control loop"""
@@ -585,6 +628,28 @@ class MPCNode(Node):
             KeyValue(key="cost_weights_enabled", value=str(self.enable_cost_function_weights)),
             KeyValue(key="trajectory_tracking", value=str(self.enable_trajectory_tracking))
         ])
+
+        # Add pose estimate diagnostic info
+        if self.rviz_pose_estimate is not None and self.current_pose is not None:
+            pos_diff_x = self.rviz_pose_estimate.position.x - self.current_pose.position.x
+            pos_diff_y = self.rviz_pose_estimate.position.y - self.current_pose.position.y
+            pos_diff_magnitude = np.sqrt(pos_diff_x**2 + pos_diff_y**2)
+
+            rviz_orientation = self.rviz_pose_estimate.orientation
+            _, _, rviz_yaw = euler_from_quaternion([
+                rviz_orientation.x, rviz_orientation.y, rviz_orientation.z, rviz_orientation.w
+            ])
+            yaw_diff = np.abs(rviz_yaw - self.current_yaw)
+            if yaw_diff > np.pi:
+                yaw_diff = 2 * np.pi - yaw_diff
+
+            mpc_status.values.extend([
+                KeyValue(key="pose_diff_magnitude", value=f"{pos_diff_magnitude:.3f}"),
+                KeyValue(key="heading_diff_deg", value=f"{np.degrees(yaw_diff):.1f}"),
+                KeyValue(key="rviz_pose_available", value="true")
+            ])
+        else:
+            mpc_status.values.append(KeyValue(key="rviz_pose_available", value="false"))
 
         diag_array.status = [mpc_status]
         self.diagnostics_publisher.publish(diag_array)

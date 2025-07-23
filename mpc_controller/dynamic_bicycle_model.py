@@ -46,20 +46,21 @@ class DynamicBicycleModel(VehicleModel):
         a = ca.SX.sym('a')
         delta = ca.SX.sym('delta')
 
-        # Tire slip angles
-        alpha_f = delta - ca.atan((v * ca.sin(beta) + self.lf * r) / (v * ca.cos(beta)))
-        alpha_r = -ca.atan((v * ca.sin(beta) - self.lr * r) / (v * ca.cos(beta)))
+        # Tire slip angles with safeguard against division by zero
+        v_safe = ca.fmax(v, 0.1)  # Ensure minimum velocity
+        alpha_f = delta - ca.atan((v_safe * ca.sin(beta) + self.lf * r) / (v_safe * ca.cos(beta) + 1e-6))
+        alpha_r = -ca.atan((v_safe * ca.sin(beta) - self.lr * r) / (v_safe * ca.cos(beta) + 1e-6))
 
         # Tire forces
         Fyf = self.Cf * alpha_f
         Fyr = self.Cr * alpha_r
 
         # State derivatives
-        xdot = v * ca.cos(theta + beta)
-        ydot = v * ca.sin(theta + beta)
+        xdot = v_safe * ca.cos(theta + beta)
+        ydot = v_safe * ca.sin(theta + beta)
         vdot = a
         thetadot = r
-        betadot = (Fyf * ca.cos(delta) + Fyr) / (self.m * v) - r
+        betadot = (Fyf * ca.cos(delta) + Fyr) / (self.m * v_safe) - r
         rdot = (self.lf * Fyf * ca.cos(delta) - self.lr * Fyr) / self.Iz
 
         state_next = ca.vertcat(x, y, v, theta, beta, r) + self.dt * ca.vertcat(
@@ -68,9 +69,7 @@ class DynamicBicycleModel(VehicleModel):
 
         return ca.Function('dynamics',
                            [x, y, v, theta, beta, r, a, delta],
-                           [state_next],
-                           ['state', 'control'],
-                           ['state_next'])
+                           [state_next])
 
 
 class DynamicCostFunction:

@@ -38,38 +38,26 @@ class KinematicBicycleModel(VehicleModel):
         a = ca.SX.sym('a')
         delta = ca.SX.sym('delta')
 
-        # Kinematic bicycle model with slip angle
+        # Kinematic bicycle model with slip angle (simplified)
         beta = ca.atan(0.5 * ca.tan(delta))  # Slip angle at center of mass
 
         # State derivatives
         xdot = v * ca.cos(theta + beta)
         ydot = v * ca.sin(theta + beta)
         vdot = a
-        thetadot = v * ca.sin(beta) / (self.L / 2)
+        thetadot = (v / self.L) * ca.tan(delta)  # Simplified bicycle model
 
-        # Discrete-time model using RK4 integration
-        k1 = ca.vertcat(xdot, ydot, vdot, thetadot)
-        k2 = ca.vertcat(
-            (v + 0.5 * self.dt * a) * ca.cos(theta + 0.5 * self.dt * thetadot + beta),
-            (v + 0.5 * self.dt * a) * ca.sin(theta + 0.5 * self.dt * thetadot + beta),
-            a,
-            (v + 0.5 * self.dt * a) * ca.sin(beta) / (self.L / 2)
+        # Use Euler integration for stability
+        state_next = ca.vertcat(
+            x + self.dt * xdot,
+            y + self.dt * ydot,
+            v + self.dt * vdot,
+            theta + self.dt * thetadot
         )
-        k3 = k2  # Simplified for bicycle model
-        k4 = ca.vertcat(
-            (v + self.dt * a) * ca.cos(theta + self.dt * thetadot + beta),
-            (v + self.dt * a) * ca.sin(theta + self.dt * thetadot + beta),
-            a,
-            (v + self.dt * a) * ca.sin(beta) / (self.L / 2)
-        )
-
-        state_next = ca.vertcat(x, y, v, theta) + self.dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
         return ca.Function('dynamics',
                            [x, y, v, theta, a, delta],
-                           [state_next],
-                           ['state', 'control'],
-                           ['state_next'])
+                           [state_next])
 
 
 class KinematicCostFunction:
