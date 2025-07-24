@@ -27,7 +27,7 @@ def compute_curvature(p1, p2, p3):
     return curvature
 
 
-def process_csv(input_path, output_path, wheelbase=0.33, max_steering=0.5):
+def process_csv(input_path, output_path, wheelbase=0.33, max_steering=0.5, min_velocity=0.1):
     """Process trajectory CSV file and add steering angles"""
     try:
         with open(input_path, 'r') as infile:
@@ -48,6 +48,15 @@ def process_csv(input_path, output_path, wheelbase=0.33, max_steering=0.5):
             x3, y3 = float(data[i3]['x']), float(data[i3]['y'])
             v = float(data[i1]['v'])
 
+            # Ensure velocity is above minimum threshold for MPC stability
+            v = max(v, min_velocity)
+
+            # Calculate heading angle (theta) from consecutive points
+            dx = x2 - x1
+            dy = y2 - y1
+            theta = math.atan2(dy, dx)
+
+            # Calculate curvature and corresponding steering angle
             curvature = compute_curvature((x1, y1), (x2, y2), (x3, y3))
             delta = math.atan(wheelbase * curvature)
 
@@ -57,12 +66,13 @@ def process_csv(input_path, output_path, wheelbase=0.33, max_steering=0.5):
             processed.append({
                 'x': x1,
                 'y': y1,
-                'δ': delta,
-                'v': v
+                'v': v,
+                'theta': theta,
+                'delta': delta
             })
 
         with open(output_path, 'w', newline='') as outfile:
-            fieldnames = ['x', 'y', 'δ', 'v']
+            fieldnames = ['x', 'y', 'v', 'theta', 'delta']
             writer = csv.DictWriter(outfile, fieldnames=fieldnames)
             writer.writeheader()
             for row in processed:
@@ -96,6 +106,7 @@ def load_ros2_params(config_path):
             'reference_trajectory_path': mpc_params.get('reference_trajectory_path'),
             'wheelbase': mpc_params.get('wheelbase', 0.33),
             'max_steering_angle': mpc_params.get('max_steering_angle', 0.5),
+            'min_speed': mpc_params.get('min_speed', 0.1),
             'enable_logging': mpc_params.get('enable_logging', True),
             'horizon_N': mpc_params.get('horizon_N', 10)
         }
@@ -127,7 +138,13 @@ def find_config_file():
     return None
 
 
-def preprocess_trajectory(input_path, output_path, config_path=None, wheelbase=None, max_steering=None):
+def preprocess_trajectory(
+        input_path,
+        output_path,
+        config_path=None,
+        wheelbase=None,
+        max_steering=None,
+        min_velocity=None):
     """
     Main function to be called from ROS2 node
 
@@ -137,6 +154,7 @@ def preprocess_trajectory(input_path, output_path, config_path=None, wheelbase=N
         config_path: Optional path to ROS2 params file
         wheelbase: Optional wheelbase value (overrides config)
         max_steering: Optional max steering angle (overrides config)
+        min_velocity: Optional minimum velocity (overrides config)
 
     Returns:
         bool: True if successful, False otherwise
@@ -144,6 +162,7 @@ def preprocess_trajectory(input_path, output_path, config_path=None, wheelbase=N
     # Default values
     L_use = wheelbase or 0.33
     max_steer_use = max_steering or 0.5
+    min_vel_use = min_velocity or 0.1
 
     # Load from config if provided
     if config_path and os.path.exists(config_path):
@@ -152,11 +171,13 @@ def preprocess_trajectory(input_path, output_path, config_path=None, wheelbase=N
             L_use = params.get('wheelbase', 0.33)
         if not max_steering:
             max_steer_use = params.get('max_steering_angle', 0.5)
+        if not min_velocity:
+            min_vel_use = params.get('min_speed', 0.1)
 
     # Create output directory if it doesn't exist
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    return process_csv(input_path, output_path, L_use, max_steer_use)
+    return process_csv(input_path, output_path, L_use, max_steer_use, min_vel_use)
 
 
 def create_sample_trajectory(output_dir="trajectory"):
@@ -173,7 +194,8 @@ def create_sample_trajectory(output_dir="trajectory"):
         # Figure-8 parametric equations
         x = 5 * math.sin(t)
         y = 2.5 * math.sin(2 * t)
-        v = 3.0 + 1.0 * math.cos(t)  # Variable velocity
+        # Ensure velocity is always positive and above minimum threshold
+        v = 1.5 + 0.8 * math.cos(t)  # Range: [0.7, 2.3] m/s - safe for MPC
 
         points.append({'x': x, 'y': y, 'v': v})
 

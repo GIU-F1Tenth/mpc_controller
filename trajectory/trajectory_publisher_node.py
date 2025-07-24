@@ -8,6 +8,7 @@ from .preprocess_trajectory import preprocess_trajectory
 import rclpy
 from rclpy.node import Node
 import csv
+import math
 import os
 import numpy as np
 from tf_transformations import euler_from_quaternion
@@ -20,14 +21,12 @@ class TrajectoryPublisherNode(Node):
 
         # Declare ROS2 parameters
         self.declare_parameter('enable_logging', True)
-        self.declare_parameter(
-            'optimal_trajectory_path',
-            '/home/mohammedazab/ws/src/race_stack/myDev/mpc_controller/trajectory/optimal_trajectory.csv')
-        self.declare_parameter('reference_trajectory_path',
-                               '/home/mohammedazab/ws/src/race_stack/myDev/mpc_controller/trajectory/ref_trajectory.csv')
+        self.declare_parameter('optimal_trajectory_path', '')
+        self.declare_parameter('reference_trajectory_path', '')
         self.declare_parameter('horizon_N', 10)
         self.declare_parameter('wheelbase', 0.33)
         self.declare_parameter('max_steering_angle', 0.5)
+        self.declare_parameter('min_speed', 0.1)
 
         # Load parameters from ROS2 parameter server
         self.enable_logging = self.get_parameter('enable_logging').value
@@ -36,6 +35,7 @@ class TrajectoryPublisherNode(Node):
         self.horizon = self.get_parameter('horizon_N').value
         self.wheelbase = self.get_parameter('wheelbase').value
         self.max_steering = self.get_parameter('max_steering_angle').value
+        self.min_speed = self.get_parameter('min_speed').value
 
         if self.enable_logging:
             self.get_logger().info("Detailed logging enabled")
@@ -161,7 +161,8 @@ class TrajectoryPublisherNode(Node):
                 self.input_path,
                 self.output_path,
                 wheelbase=self.wheelbase,
-                max_steering=self.max_steering
+                max_steering=self.max_steering,
+                min_velocity=self.min_speed
             )
 
             if success:
@@ -178,7 +179,7 @@ class TrajectoryPublisherNode(Node):
             self.path_ready = False
 
     def load_trajectory_from_csv(self, path):
-        """Load processed trajectory from CSV file"""
+        """Load processed trajectory from CSV file with theta support"""
         data = []
         try:
             with open(path, 'r') as csvfile:
@@ -188,7 +189,15 @@ class TrajectoryPublisherNode(Node):
                     state.x = float(row['x'])
                     state.y = float(row['y'])
                     state.v = float(row['v'])
-                    # Handle both 'delta' and 'δ' column names
+
+                    # Handle theta (heading angle) - this is what MPC needs
+                    if 'theta' in row:
+                        state.theta = float(row['theta'])
+                    else:
+                        # Calculate theta from the data if not provided
+                        state.theta = 0.0  # Will be calculated later
+
+                    # Handle both 'delta' and 'δ' column names for steering angle
                     if 'delta' in row:
                         state.delta = float(row['delta'])
                     elif 'δ' in row:
@@ -196,6 +205,17 @@ class TrajectoryPublisherNode(Node):
                     else:
                         state.delta = 0.0
                     data.append(state)
+
+            # If theta was not provided, calculate it from consecutive points
+            if len(data) > 1 and data[0].theta == 0.0:
+                for i in range(len(data)):
+                    if i < len(data) - 1:
+                        dx = data[i + 1].x - data[i].x
+                        dy = data[i + 1].y - data[i].y
+                        data[i].theta = math.atan2(dy, dx)
+                    else:
+                        # For the last point, use the same theta as the previous point
+                        data[i].theta = data[i - 1].theta
 
             self.log_info(f"Loaded {len(data)} trajectory points")
         except Exception as e:
