@@ -12,6 +12,8 @@ Version: 2.0.0
 """
 
 import rclpy
+import numpy as np
+import time
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.time import Time
@@ -21,12 +23,14 @@ from ackermann_msgs.msg import AckermannDriveStamped
 from std_msgs.msg import Bool, Float32
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from giu_f1t_interfaces.msg import VehicleState, VehicleStateArray
-
-import numpy as np
 from tf_transformations import euler_from_quaternion
-import time
 
-from .optimized_mpc_controller import OptimizedMPCController, MPCType
+try:
+    from .optimized_mpc_controller import OptimizedMPCController
+    from .kinematic_bicycle_model import MPCType
+except ImportError:
+    from optimized_mpc_controller import OptimizedMPCController
+    from kinematic_bicycle_model import MPCType
 
 
 class MPCNode(Node):
@@ -110,7 +114,7 @@ class MPCNode(Node):
         self.declare_parameter('emergency_brake_threshold', 2.0)
 
         # Topics
-        self.declare_parameter('odom_topic', '/odom')
+        self.declare_parameter('odom_topic', 'car_state/odom')
         self.declare_parameter('reference_topic', '/mpc/reference_trajectory')
         self.declare_parameter('status_topic', '/mpc/path_ready')
         self.declare_parameter('control_topic', '/drive')
@@ -231,21 +235,23 @@ class MPCNode(Node):
                 lookahead_distance=self.lookahead_distance
             )
 
-            if self.enable_logging:
-                self.get_logger().info(
-                    f"✅ Initialized {self.mpc_type.value} Optimized MPC controller with all parameters")
+            self.get_logger().info("✅ Optimized MPC Controller initialized successfully")
+            self.get_logger().info(f"   - Type: {self.mpc_type.value}")
+            self.get_logger().info(f"   - Horizon: N={self.horizon_N}, T={self.horizon_T}s")
+            self.get_logger().info(f"   - Solver: {self.solver_type}")
+            self.get_logger().info(f"   - Control Hz: {self.control_hz}")
 
         except Exception as e:
-            self.get_logger().error(f"❌ Failed to initialize Optimized MPC controller: {e}")
+            self.get_logger().error(f"❌ Failed to initialize MPC controller: {e}")
             raise e
 
     def _initialize_state(self):
-        """Initialize node state variables"""
+        """Initialize node state variables with safe defaults"""
 
         # Vehicle state
         self.current_pose = None
         self.current_velocity = 0.0
-        self.current_yaw = 0.0
+        self.current_yaw = 0.0  # Initialize to 0 instead of None
         self.current_steering_angle = 0.0
 
         # RViz 2D Pose Estimate for debugging/validation
@@ -268,6 +274,12 @@ class MPCNode(Node):
 
         # Performance metrics
         self.control_loop_times = []
+
+        # Add state validation flags and failure tracking
+        self.state_initialized = False
+        self.first_odom_received = False
+        self.consecutive_mpc_failures = 0
+        self.last_successful_solve_time = None
 
     def _setup_subscriptions(self):
         """Setup ROS2 subscriptions"""
@@ -338,65 +350,231 @@ class MPCNode(Node):
         self.create_timer(1.0, self._publish_diagnostics)
 
     def _odom_callback(self, msg: Odometry):
-        """Process odometry data"""
+        """Process odometry data with validation"""
 
-        self.current_pose = msg.pose.pose
+        try:
+            # Validate odometry message
+            if not self._validate_odometry_msg(msg):
+                if self.enable_logging and not self.first_odom_received:
+                    self.get_logger().warn("Received invalid odometry message, skipping update")
+                return
 
-        # Extract velocity
-        linear_vel = msg.twist.twist.linear
-        self.current_velocity = np.sqrt(linear_vel.x**2 + linear_vel.y**2)
+            self.current_pose = msg.pose.pose
 
-        # Extract yaw angle
-        orientation = msg.pose.pose.orientation
-        _, _, self.current_yaw = euler_from_quaternion([
-            orientation.x, orientation.y, orientation.z, orientation.w
-        ])
+            # Extract velocity with validation
+            linear_vel = msg.twist.twist.linear
+            velocity_magnitude = np.sqrt(linear_vel.x**2 + linear_vel.y**2)
 
-        # Extract additional states for dynamic model
-        if self.mpc_type == MPCType.DYNAMIC:
-            self.current_yaw_rate = msg.twist.twist.angular.z
-            # Estimate sideslip angle (simplified)
-            if self.current_velocity > 0.1:
-                lateral_vel = linear_vel.y  # Assuming body frame
-                self.current_beta = np.arctan(lateral_vel / self.current_velocity)
+            # Validate and clamp velocity
+            if np.isfinite(velocity_magnitude) and velocity_magnitude < 100:  # Reasonable upper bound
+                self.current_velocity = velocity_magnitude
+            else:
+                if self.enable_logging:
+                    self.get_logger().warn(f"Invalid velocity detected: {velocity_magnitude}, keeping previous value")
 
-        self.last_odom_time = self.get_clock().now()
+            # Extract yaw angle with validation
+            orientation = msg.pose.pose.orientation
+            try:
+                _, _, yaw = euler_from_quaternion([
+                    orientation.x, orientation.y, orientation.z, orientation.w
+                ])
+                if np.isfinite(yaw):
+                    self.current_yaw = yaw
+                else:
+                    if self.enable_logging:
+                        self.get_logger().warn("Invalid yaw angle detected, keeping previous value")
+            except BaseException:
+                if self.enable_logging:
+                    self.get_logger().warn("Failed to extract yaw angle from quaternion")
+
+            # Extract additional states for dynamic model
+            if self.mpc_type == MPCType.DYNAMIC:
+                yaw_rate = msg.twist.twist.angular.z
+                if np.isfinite(yaw_rate) and abs(yaw_rate) < 50:  # Reasonable bound
+                    self.current_yaw_rate = yaw_rate
+
+                # Estimate sideslip angle (simplified)
+                if self.current_velocity > 0.1:
+                    lateral_vel = linear_vel.y  # Assuming body frame
+                    if np.isfinite(lateral_vel):
+                        beta = np.arctan(lateral_vel / self.current_velocity)
+                        if abs(beta) < np.pi / 2:  # Reasonable bound
+                            self.current_beta = beta
+
+            self.last_odom_time = self.get_clock().now()
+
+            if not self.first_odom_received:
+                self.first_odom_received = True
+                self.state_initialized = True
+                if self.enable_logging:
+                    self.get_logger().info("First valid odometry received, MPC ready for operation")
+
+        except Exception as e:
+            if self.enable_logging:
+                self.get_logger().error(f"Error processing odometry: {e}")
+
+    def _validate_odometry_msg(self, msg):
+        """Validate odometry message for numerical stability"""
+        try:
+            # Check position
+            pos = msg.pose.pose.position
+            if not (np.isfinite(pos.x) and np.isfinite(pos.y) and np.isfinite(pos.z)):
+                return False
+            if abs(pos.x) > 10000 or abs(pos.y) > 10000:  # Reasonable position bounds
+                return False
+
+            # Check orientation
+            ori = msg.pose.pose.orientation
+            if not (np.isfinite(ori.x) and np.isfinite(ori.y) and np.isfinite(ori.z) and np.isfinite(ori.w)):
+                return False
+
+            # Check if quaternion is normalized (approximately)
+            norm = np.sqrt(ori.x**2 + ori.y**2 + ori.z**2 + ori.w**2)
+            if abs(norm - 1.0) > 0.1:  # Allow some tolerance
+                return False
+
+            # Check velocities
+            lin_vel = msg.twist.twist.linear
+            ang_vel = msg.twist.twist.angular
+            velocities = [lin_vel.x, lin_vel.y, lin_vel.z, ang_vel.x, ang_vel.y, ang_vel.z]
+            if not all(np.isfinite(v) for v in velocities):
+                return False
+
+            return True
+        except BaseException:
+            return False
 
     def _reference_callback(self, msg: VehicleStateArray):
-        """Process reference trajectory"""
+        """Process reference trajectory with robust numerical validation"""
 
-        if len(msg.states) < self.horizon_N:
-            self.get_logger().warn(f"Reference trajectory too short: {len(msg.states)} < {self.horizon_N}")
+        if len(msg.states) < 2:  # Need at least 2 points to calculate heading
+            self.get_logger().warn(f"Reference trajectory too short: {len(msg.states)} < 2 (minimum)")
             return
 
-        # Convert to numpy array for MPC
+        # Convert to numpy array for MPC with validation
         self.reference_trajectory = []
         for i, state in enumerate(msg.states):
+            # Validate state values for numerical stability
+            if not self._validate_state_values(state):
+                self.get_logger().warn(f"Invalid state values detected at index {i}, skipping trajectory update")
+                return
+
             if self.mpc_type == MPCType.KINEMATIC:
-                # Calculate heading from trajectory points
-                if i < len(msg.states) - 1:
-                    next_state = msg.states[i + 1]
-                    theta = np.arctan2(next_state.y - state.y, next_state.x - state.x)
+                # Use theta from VehicleState if available, otherwise calculate from trajectory points
+                if hasattr(state, 'theta') and abs(state.theta) > 1e-6:  # More robust check
+                    theta = state.theta
                 else:
-                    theta = self.current_yaw  # Use current heading for last point
+                    # Calculate heading from trajectory points
+                    if i < len(msg.states) - 1:
+                        next_state = msg.states[i + 1]
+                        dx = next_state.x - state.x
+                        dy = next_state.y - state.y
+                        # Validate heading calculation inputs
+                        if abs(dx) < 1e-8 and abs(dy) < 1e-8:
+                            # Points are too close, use previous theta or current yaw
+                            theta = self.current_yaw if self.current_yaw is not None else 0.0
+                        else:
+                            theta = np.arctan2(dy, dx)
+                    else:
+                        # Use current heading for last point, with fallback
+                        theta = self.current_yaw if self.current_yaw is not None else 0.0
+
+                # Ensure theta is normalized to [-pi, pi]
+                theta = np.arctan2(np.sin(theta), np.cos(theta))
 
                 self.reference_trajectory.append([
-                    state.x, state.y, state.v, theta
+                    float(state.x), float(state.y), float(max(0.1, state.v)), float(theta)
                 ])
             else:  # DYNAMIC
-                # Calculate heading from trajectory points
-                if i < len(msg.states) - 1:
-                    next_state = msg.states[i + 1]
-                    theta = np.arctan2(next_state.y - state.y, next_state.x - state.x)
+                # Use theta from VehicleState if available, otherwise calculate from trajectory points
+                if hasattr(state, 'theta') and abs(state.theta) > 1e-6:
+                    theta = state.theta
                 else:
-                    theta = self.current_yaw
+                    # Calculate heading from trajectory points
+                    if i < len(msg.states) - 1:
+                        next_state = msg.states[i + 1]
+                        dx = next_state.x - state.x
+                        dy = next_state.y - state.y
+                        # Validate heading calculation inputs
+                        if abs(dx) < 1e-8 and abs(dy) < 1e-8:
+                            theta = self.current_yaw if self.current_yaw is not None else 0.0
+                        else:
+                            theta = np.arctan2(dy, dx)
+                    else:
+                        theta = self.current_yaw if self.current_yaw is not None else 0.0
+
+                # Ensure theta is normalized to [-pi, pi]
+                theta = np.arctan2(np.sin(theta), np.cos(theta))
 
                 self.reference_trajectory.append([
-                    state.x, state.y, state.v, theta, 0.0, 0.0  # beta=0, r=0 for reference
+                    float(state.x), float(state.y), float(max(0.1, state.v)), float(theta), 0.0, 0.0  # beta=0, r=0 for reference
                 ])
 
         self.reference_trajectory = np.array(self.reference_trajectory)
+
+        # Final validation of the complete trajectory
+        if not self._validate_trajectory(self.reference_trajectory):
+            self.get_logger().error("Reference trajectory contains invalid values, rejecting update")
+            return
+
         self.last_trajectory_time = self.get_clock().now()
+
+        # Debug logging for received trajectory
+        if self.enable_logging:
+            self.get_logger().info(
+                f"Received reference trajectory with {len(self.reference_trajectory)} points (horizon_N={self.horizon_N})")
+
+    def _validate_state_values(self, state):
+        """Validate individual state values for numerical stability"""
+        try:
+            # Check for NaN or infinite values
+            values = [state.x, state.y, state.v]
+            if hasattr(state, 'theta'):
+                values.append(state.theta)
+
+            for val in values:
+                if not np.isfinite(val):
+                    return False
+
+            # Check for reasonable ranges
+            if abs(state.x) > 1000 or abs(state.y) > 1000:  # Position bounds
+                return False
+            if state.v < -10 or state.v > 50:  # Velocity bounds
+                return False
+            if hasattr(state, 'theta') and abs(state.theta) > 10:  # Angle bounds
+                return False
+
+            return True
+        except BaseException:
+            return False
+
+    def _validate_trajectory(self, trajectory):
+        """Validate complete trajectory for numerical stability"""
+        try:
+            if trajectory is None or len(trajectory) == 0:
+                return False
+
+            # Check for NaN or infinite values
+            if not np.all(np.isfinite(trajectory)):
+                return False
+
+            # Check trajectory smoothness (no sudden jumps)
+            if len(trajectory) > 1:
+                diffs = np.diff(trajectory, axis=0)
+                position_diffs = np.linalg.norm(diffs[:, :2], axis=1)  # x,y differences
+
+                # Check for unreasonably large position jumps (>5m between points)
+                if np.any(position_diffs > 5.0):
+                    return False
+
+                # Check for unreasonably large velocity jumps (>10 m/s between points)
+                velocity_diffs = np.abs(diffs[:, 2])
+                if np.any(velocity_diffs > 10.0):
+                    return False
+
+            return True
+        except BaseException:
+            return False
 
     def _status_callback(self, msg: Bool):
         """Process path ready status"""
@@ -462,15 +640,45 @@ class MPCNode(Node):
                 self.solve_time_publisher.publish(solve_time_msg)
 
                 self.control_active = True
+                self.consecutive_mpc_failures = 0  # Reset failure counter
+                self.last_successful_solve_time = self.get_clock().now()
 
             else:
+                self.consecutive_mpc_failures += 1
+
                 if self.enable_logging:
-                    self.get_logger().warn("Optimized MPC optimization failed, publishing zero control")
+                    self.get_logger().warn(
+                        f"MPC optimization failed (consecutive: {self.consecutive_mpc_failures}), publishing zero control. Result: {result}")
+
+                # Try reset after many consecutive failures
+                if self.consecutive_mpc_failures >= 5:
+                    if self.enable_logging:
+                        self.get_logger().warn("Resetting MPC controller due to persistent failures")
+                    self.mpc_controller.reset_performance_tracking()
+                    self.consecutive_mpc_failures = 0
+
                 self._publish_zero_control()
                 self.control_active = False
 
         except Exception as e:
-            self.get_logger().error(f"Control loop error: {e}")
+            self.consecutive_mpc_failures += 1
+            self.get_logger().error(f"Control loop error (consecutive: {self.consecutive_mpc_failures}): {e}")
+
+            if self.enable_logging:
+                # Additional debug info
+                self.get_logger().error(f"Current state available: {self.current_pose is not None}")
+                self.get_logger().error(f"Path ready: {self.path_ready}")
+                self.get_logger().error(
+                    f"Reference trajectory length: {len(self.reference_trajectory) if hasattr(self, 'reference_trajectory') else 'None'}")
+                self.get_logger().error(f"Horizon N: {self.horizon_N}")
+
+            # Emergency reset after critical failures
+            if self.consecutive_mpc_failures >= 10:
+                if self.enable_logging:
+                    self.get_logger().error("Critical MPC failures detected, performing emergency reset")
+                self.mpc_controller.reset_performance_tracking()
+                self.consecutive_mpc_failures = 0
+
             self._publish_emergency_stop()
             self.control_active = False
 
@@ -507,47 +715,172 @@ class MPCNode(Node):
         return True
 
     def _data_ready(self):
-        """Check if all required data is available"""
+        """Check if all required data is available with enhanced validation"""
 
         checks = [
             self.current_pose is not None,
+            self.state_initialized,
+            self.first_odom_received,
             self.path_ready,
-            len(self.reference_trajectory) >= self.horizon_N
+            len(self.reference_trajectory) >= 2,  # Need at least 2 points, will extend if needed
+            self._validate_current_state()  # Additional numerical validation
         ]
+
+        # Debug logging for data readiness
+        if self.enable_logging:
+            ready = all(checks)
+            if not ready:
+                failed_checks = []
+                if not checks[0]:
+                    failed_checks.append("no_pose")
+                if not checks[1]:
+                    failed_checks.append("not_initialized")
+                if not checks[2]:
+                    failed_checks.append("no_odom")
+                if not checks[3]:
+                    failed_checks.append("path_not_ready")
+                if not checks[4]:
+                    failed_checks.append(f"traj_too_short({len(self.reference_trajectory)})")
+                if not checks[5]:
+                    failed_checks.append("invalid_state")
+
+                self.get_logger().debug(f"Data not ready - Failed checks: {', '.join(failed_checks)}")
 
         return all(checks)
 
     def _solve_mpc_optimization(self):
-        """Solve MPC optimization problem"""
+        """Solve MPC optimization problem with robust numerical validation"""
+
+        # Validate current state before solving
+        if not self._validate_current_state():
+            if self.enable_logging:
+                self.get_logger().warn("Current state contains invalid values, cannot solve MPC")
+            return {
+                'success': False,
+                'acceleration': 0.0,
+                'steering': 0.0,
+                'solve_time': 0.0,
+                'error': 'Invalid current state'}
 
         # Prepare current state
         if self.mpc_type == MPCType.KINEMATIC:
             current_state = {
-                'x': self.current_pose.position.x,
-                'y': self.current_pose.position.y,
-                'v': self.current_velocity,
-                'theta': self.current_yaw
+                'x': float(self.current_pose.position.x),
+                'y': float(self.current_pose.position.y),
+                'v': float(max(0.01, self.current_velocity)),  # Ensure minimum positive velocity
+                'theta': float(self.current_yaw)
             }
         else:  # DYNAMIC
             current_state = {
-                'x': self.current_pose.position.x,
-                'y': self.current_pose.position.y,
-                'v': self.current_velocity,
-                'theta': self.current_yaw,
-                'beta': self.current_beta,
-                'r': self.current_yaw_rate
+                'x': float(self.current_pose.position.x),
+                'y': float(self.current_pose.position.y),
+                'v': float(max(0.01, self.current_velocity)),  # Ensure minimum positive velocity
+                'theta': float(self.current_yaw),
+                'beta': float(self.current_beta),
+                'r': float(self.current_yaw_rate)
             }
 
-        # Ensure reference trajectory is the right size
-        if len(self.reference_trajectory) > self.horizon_N + 1:
+        # Ensure reference trajectory has exactly the right size (N+1 points)
+        if len(self.reference_trajectory) >= self.horizon_N + 1:
             reference_traj = self.reference_trajectory[:self.horizon_N + 1]
         else:
-            reference_traj = self.reference_trajectory
+            # If we don't have enough points, extend the trajectory by repeating the last point
+            reference_traj = list(self.reference_trajectory)  # Convert to list for easier manipulation
+
+            if len(reference_traj) > 0:
+                last_point = reference_traj[-1].copy()
+
+                # Extend with the last point to reach N+1 total points
+                while len(reference_traj) < self.horizon_N + 1:
+                    reference_traj.append(last_point.copy())
+
+                if self.enable_logging:
+                    self.get_logger().info(
+                        f"Extended reference trajectory from {len(self.reference_trajectory)} to {len(reference_traj)} points")
+            else:
+                # Fallback: create a trajectory with current state
+                if self.mpc_type == MPCType.KINEMATIC:
+                    fallback_point = [
+                        current_state['x'],
+                        current_state['y'],
+                        max(0.1, current_state['v']),  # Ensure positive velocity
+                        current_state['theta']
+                    ]
+                else:
+                    fallback_point = [
+                        current_state['x'],
+                        current_state['y'],
+                        max(0.1, current_state['v']),  # Ensure positive velocity
+                        current_state['theta'],
+                        0.0, 0.0
+                    ]
+
+                reference_traj = [fallback_point] * (self.horizon_N + 1)
+
+                if self.enable_logging:
+                    self.get_logger().warn(
+                        f"Created fallback reference trajectory with {len(reference_traj)} points using current state")
+
+        # Convert to numpy array if it isn't already
+        reference_traj = np.array(reference_traj)
+
+        # Final validation of reference trajectory
+        if not np.all(np.isfinite(reference_traj)):
+            if self.enable_logging:
+                self.get_logger().error("Reference trajectory contains NaN or infinite values")
+            return {'success': False, 'acceleration': 0.0, 'steering': 0.0,
+                    'solve_time': 0.0, 'error': 'Invalid reference trajectory'}
+
+        # Debug logging
+        if self.enable_logging:
+            self.get_logger().debug(
+                f"Reference trajectory shape: {reference_traj.shape}, Expected: ({self.horizon_N + 1}, {4 if self.mpc_type == MPCType.KINEMATIC else 6})")
+            self.get_logger().debug(f"Current state: {current_state}")
+            # Log reference trajectory range for debugging
+            self.get_logger().debug(
+                f"Ref traj ranges - X: [{np.min(reference_traj[:, 0]):.2f}, {np.max(reference_traj[:, 0]):.2f}], "
+                f"Y: [{np.min(reference_traj[:, 1]):.2f}, {np.max(reference_traj[:, 1]):.2f}], "
+                f"V: [{np.min(reference_traj[:, 2]):.2f}, {np.max(reference_traj[:, 2]):.2f}]")
 
         # Solve MPC
         result = self.mpc_controller.solve_mpc(current_state, reference_traj)
 
         return result
+
+    def _validate_current_state(self):
+        """Validate current vehicle state for numerical stability"""
+        try:
+            if self.current_pose is None:
+                return False
+
+            # Check position
+            pos_x = self.current_pose.position.x
+            pos_y = self.current_pose.position.y
+            if not np.isfinite(pos_x) or not np.isfinite(pos_y):
+                return False
+            if abs(pos_x) > 1000 or abs(pos_y) > 1000:
+                return False
+
+            # Check velocity
+            if not np.isfinite(self.current_velocity):
+                return False
+            if self.current_velocity < -10 or self.current_velocity > 50:
+                return False
+
+            # Check yaw
+            if not np.isfinite(self.current_yaw):
+                return False
+
+            # Check additional states for dynamic model
+            if self.mpc_type == MPCType.DYNAMIC:
+                if not np.isfinite(self.current_beta) or not np.isfinite(self.current_yaw_rate):
+                    return False
+                if abs(self.current_beta) > np.pi / 2 or abs(self.current_yaw_rate) > 10:
+                    return False
+
+            return True
+        except BaseException:
+            return False
 
     def _publish_control_command(self, acceleration, steering_angle):
         """Publish control command with safety limits from parameters"""
@@ -571,7 +904,18 @@ class MPCNode(Node):
 
     def _publish_zero_control(self):
         """Publish zero control command"""
-        self._publish_control_command(0.0, 0.0)
+        # Create zero control message directly instead of using _publish_control_command
+        # to avoid min_speed clipping
+        drive_msg = AckermannDriveStamped()
+        drive_msg.header.stamp = self.get_clock().now().to_msg()
+        drive_msg.header.frame_id = 'base_link'
+        drive_msg.drive.speed = 0.0
+        drive_msg.drive.steering_angle = 0.0
+
+        self.control_publisher.publish(drive_msg)
+
+        if self.enable_logging:
+            self.get_logger().debug("Published zero control command")
 
     def _publish_emergency_stop(self):
         """Publish emergency stop command"""

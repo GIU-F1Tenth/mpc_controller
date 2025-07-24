@@ -1,23 +1,10 @@
 import casadi as ca
 import numpy as np
-from enum import Enum
 
-
-class MPCType(Enum):
-    KINEMATIC = "kinematic"
-    DYNAMIC = "dynamic"
-
-
-class VehicleModel:
-    """Base vehicle dynamics model"""
-
-    def __init__(self, wheelbase=0.33, dt=0.05):
-        self.L = wheelbase
-        self.dt = dt
-
-    def get_dynamics(self):
-        """Override in subclasses"""
-        raise NotImplementedError
+try:
+    from .kinematic_bicycle_model import VehicleModel
+except ImportError:
+    from kinematic_bicycle_model import VehicleModel
 
 
 class DynamicBicycleModel(VehicleModel):
@@ -159,6 +146,75 @@ class DynamicCostFunction:
             return 0.0
 
         return self.trajectory_tracking_weight * ca.sumsqr(position_error)
+
+
+class DynamicConstraintsManager:
+    """Manage vehicle and racing constraints for Dynamic model"""
+
+    def __init__(self,
+                 max_steering_angle=0.5,
+                 max_acceleration=1.0,
+                 max_deceleration=1.0,
+                 min_speed=0.1,
+                 max_speed=2.0,
+                 enable_hard_constraints=True,
+                 hard_constraints=None,
+                 enable_safety_checks=True,
+                 safety_check_distance=0.5):
+
+        self.enable_hard_constraints = enable_hard_constraints
+        self.enable_safety_checks = enable_safety_checks
+        self.safety_check_distance = safety_check_distance
+
+        # Vehicle constraints from parameters
+        self.max_speed = max_speed
+        self.min_speed = min_speed
+        self.max_acceleration = max_acceleration
+        self.max_deceleration = -abs(max_deceleration)  # Ensure negative
+        self.max_steering_angle = max_steering_angle
+        self.max_steering_rate = 3.0  # Default value
+
+        # Override with hard constraints if provided
+        if hard_constraints and enable_hard_constraints:
+            self.max_steering_angle = hard_constraints.get('max_steering_angle', self.max_steering_angle)
+            self.max_acceleration = hard_constraints.get('max_acceleration', self.max_acceleration)
+            self.max_deceleration = -abs(hard_constraints.get('max_deceleration', abs(self.max_deceleration)))
+
+        # Dynamic model specific constraints
+        self.max_slip_angle = 0.2
+        self.max_yaw_rate = 2.0
+
+    def apply_constraints(self, opti, U, X, N):
+        """Apply all constraints to the optimization problem for Dynamic model"""
+
+        # Control input constraints
+        opti.subject_to(opti.bounded(self.max_deceleration, U[0, :], self.max_acceleration))
+        opti.subject_to(opti.bounded(-self.max_steering_angle, U[1, :], self.max_steering_angle))
+
+        # Speed constraints (X[2] is velocity for dynamic model)
+        opti.subject_to(opti.bounded(self.min_speed, X[2, :], self.max_speed))
+
+        # Steering rate constraints (if hard constraints enabled)
+        if self.enable_hard_constraints:
+            for i in range(N - 1):
+                steering_rate = (U[1, i + 1] - U[1, i]) / 0.05  # Assuming dt = 0.05
+                opti.subject_to(opti.bounded(-self.max_steering_rate, steering_rate, self.max_steering_rate))
+
+        # Dynamic model-specific constraints
+        opti.subject_to(opti.bounded(-self.max_slip_angle, X[4, :], self.max_slip_angle))  # Beta
+        opti.subject_to(opti.bounded(-self.max_yaw_rate, X[5, :], self.max_yaw_rate))      # Yaw rate
+
+        # Safety constraints (simplified implementation)
+        if self.enable_safety_checks:
+            # Add minimum distance between consecutive points
+            for i in range(N):
+                # Ensure minimum forward progress - use squared distance to avoid sqrt issues
+                if i > 0:
+                    dx = X[0, i] - X[0, i - 1]
+                    dy = X[1, i] - X[1, i - 1]
+                    position_diff_squared = dx**2 + dy**2
+                    # Use squared constraint to avoid NaN in sqrt: d^2 >= (0.01)^2 = 0.0001
+                    opti.subject_to(position_diff_squared >= 1e-4)  # Minimum movement squared
 
 
 class DynamicConstraintsManager:

@@ -3,13 +3,24 @@ import numpy as np
 import time
 
 # Import separated model classes
-from .kinematic_bicycle_model import (
-    MPCType, VehicleModel, KinematicBicycleModel,
-    KinematicCostFunction, KinematicConstraintsManager
-)
-from .dynamic_bicycle_model import (
-    DynamicBicycleModel, DynamicCostFunction, DynamicConstraintsManager
-)
+try:
+    # Try relative import first (for package use)
+    from .kinematic_bicycle_model import (
+        MPCType, VehicleModel, KinematicBicycleModel,
+        KinematicCostFunction, KinematicConstraintsManager
+    )
+    from .dynamic_bicycle_model import (
+        DynamicBicycleModel, DynamicCostFunction, DynamicConstraintsManager
+    )
+except ImportError:
+    # Fall back to absolute import (for standalone use)
+    from kinematic_bicycle_model import (
+        MPCType, VehicleModel, KinematicBicycleModel,
+        KinematicCostFunction, KinematicConstraintsManager
+    )
+    from dynamic_bicycle_model import (
+        DynamicBicycleModel, DynamicCostFunction, DynamicConstraintsManager
+    )
 
 
 class SolverConfiguration:
@@ -17,26 +28,36 @@ class SolverConfiguration:
 
     @staticmethod
     def get_solver_options(solver_type='ipopt'):
-        """Get optimized solver options for racing MPC"""
+        """Get optimized solver options for racing MPC with maximum numerical stability"""
 
         if solver_type == 'ipopt':
+            # Minimalist, validated IPOPT configuration
             return {
                 'ipopt.print_level': 0,
-                'ipopt.max_iter': 150,
-                'ipopt.tol': 1e-4,
-                'ipopt.acceptable_tol': 1e-3,
-                'ipopt.acceptable_iter': 10,
-                'ipopt.warm_start_init_point': 'yes',
-                'ipopt.warm_start_bound_push': 1e-6,
-                'ipopt.warm_start_mult_bound_push': 1e-6,
-                'print_time': False
+                'ipopt.max_iter': 100,
+                'ipopt.tol': 1e-3,
+                'ipopt.acceptable_tol': 1e-2,
+                'ipopt.acceptable_iter': 5,
+                'ipopt.linear_solver': 'mumps',  # Most reliable solver
+                'ipopt.mu_init': 1e-1,
+                'ipopt.nlp_scaling_method': 'gradient-based',
+                'ipopt.bound_push': 1e-2,
+                'ipopt.bound_frac': 1e-2,
+                'print_time': False,
+                'verbose': False
             }
         elif solver_type == 'sqpmethod':
             return {
                 'qpsol': 'qrqp',
                 'print_header': False,
                 'print_iteration': False,
-                'max_iter': 100
+                'max_iter': 20,          # Very conservative
+                'tol_pr': 1e-2,          # Relaxed primal feasibility
+                'tol_du': 1e-2,          # Relaxed dual feasibility
+                'regularize': True,       # Enable regularization
+                'reg_threshold': 1e-6,    # More aggressive regularization
+                'beta': 0.8,             # Line search parameter
+                'merit_memory': 4        # Merit function memory
             }
         else:
             return {}
@@ -95,10 +116,11 @@ class OptimizedMPCController:
         self.enable_obstacle_avoidance = enable_obstacle_avoidance
         self.enable_safety_checks = enable_safety_checks
 
-        # Performance tracking
+        # Performance tracking and failure handling
         self.solve_times = []
         self.solve_success_rate = []
         self.iteration_count = 0
+        self.consecutive_failures = 0  # Track consecutive failures
 
         # Warm start storage
         self.previous_solution_U = None
@@ -253,7 +275,7 @@ class OptimizedMPCController:
 
     def solve_mpc(self, current_state, reference_trajectory):
         """
-        Solve MPC optimization problem with all parameter features
+        Solve MPC optimization problem with robust numerical validation
 
         Parameters:
             current_state: dict with keys based on model type
@@ -267,46 +289,110 @@ class OptimizedMPCController:
         self.iteration_count += 1
 
         try:
+            # Validate inputs first
+            if not self._validate_inputs(current_state, reference_trajectory):
+                return {
+                    'acceleration': 0.0,
+                    'steering': 0.0,
+                    'success': False,
+                    'solve_time': time.time() - start_time,
+                    'error': 'Input validation failed'
+                }
+
             # Prepare state vector based on model type
             if self.mpc_type == MPCType.KINEMATIC:
                 state_vector = np.array([
-                    current_state['x'],
-                    current_state['y'],
-                    current_state['v'],
-                    current_state['theta']
+                    float(current_state['x']),
+                    float(current_state['y']),
+                    float(max(0.01, current_state['v'])),  # Ensure minimum positive velocity
+                    float(current_state['theta'])
                 ])
             else:  # DYNAMIC
                 state_vector = np.array([
-                    current_state['x'],
-                    current_state['y'],
-                    current_state['v'],
-                    current_state['theta'],
-                    current_state.get('beta', 0.0),
-                    current_state.get('r', 0.0)
+                    float(current_state['x']),
+                    float(current_state['y']),
+                    float(max(0.01, current_state['v'])),  # Ensure minimum positive velocity
+                    float(current_state['theta']),
+                    float(current_state.get('beta', 0.0)),
+                    float(current_state.get('r', 0.0))
                 ])
+
+            # Validate state vector
+            if not np.all(np.isfinite(state_vector)):
+                return {
+                    'acceleration': 0.0,
+                    'steering': 0.0,
+                    'success': False,
+                    'solve_time': time.time() - start_time,
+                    'error': 'State vector contains NaN/Inf values'
+                }
 
             # Set parameters
             self.opti.set_value(self.X0, state_vector.reshape(-1, 1))
             self.opti.set_value(self.X_ref, reference_trajectory.T)
 
-            # Warm start if available
-            if self.previous_solution_U is not None:
+            # Warm start if available and not too many recent failures
+            if (self.previous_solution_U is not None and
+                self.previous_solution_X is not None and
+                    self.consecutive_failures < 3):  # Reset warm start after 3 consecutive failures
                 # Shift previous solution and add last control input
                 warm_start_U = np.roll(self.previous_solution_U, -1, axis=1)
                 warm_start_U[:, -1] = warm_start_U[:, -2]  # Repeat last control
                 self.opti.set_initial(self.U, warm_start_U)
 
-            if self.previous_solution_X is not None:
                 warm_start_X = np.roll(self.previous_solution_X, -1, axis=1)
                 warm_start_X[:, -1] = warm_start_X[:, -2]  # Repeat last state
                 self.opti.set_initial(self.X, warm_start_X)
+            elif self.consecutive_failures >= 3:
+                # Reset warm start after consecutive failures
+                if self.enable_logging:
+                    print(f"⚠️ Resetting warm start after {self.consecutive_failures} consecutive failures")
+                self.previous_solution_U = None
+                self.previous_solution_X = None
 
-            # Solve optimization
-            sol = self.opti.solve()
+            # Solve optimization with debug capability
+            try:
+                sol = self.opti.solve()
+            except Exception as solve_error:
+                # Try to get debug information if available
+                if self.enable_logging:
+                    print(f"🐛 Solver failed, attempting debug...")
+                    try:
+                        # Get debug values to understand what went wrong
+                        debug_U = self.opti.debug.value(self.U)
+                        debug_X = self.opti.debug.value(self.X)
+                        debug_X0 = self.opti.debug.value(self.X0)
+                        debug_X_ref = self.opti.debug.value(self.X_ref)
+
+                        print(f"  Debug U shape: {debug_U.shape if debug_U is not None else 'None'}")
+                        print(f"  Debug X shape: {debug_X.shape if debug_X is not None else 'None'}")
+                        print(f"  Debug X0 finite: {np.all(np.isfinite(debug_X0)) if debug_X0 is not None else 'None'}")
+                        print(
+                            f"  Debug X_ref finite: {np.all(np.isfinite(debug_X_ref)) if debug_X_ref is not None else 'None'}")
+
+                        # Check for specific problematic values
+                        if debug_X_ref is not None:
+                            print(f"  X_ref range: X=[{np.min(debug_X_ref[0,:]):.3f}, {np.max(debug_X_ref[0,:]):.3f}], "
+                                  f"Y=[{np.min(debug_X_ref[1,:]):.3f}, {np.max(debug_X_ref[1,:]):.3f}], "
+                                  f"V=[{np.min(debug_X_ref[2,:]):.3f}, {np.max(debug_X_ref[2,:]):.3f}]")
+                    except BaseException:
+                        print(f"  Could not extract debug information")
+
+                raise solve_error
 
             # Extract solution
             optimal_U = sol.value(self.U)
             optimal_X = sol.value(self.X)
+
+            # Validate solution
+            if not (np.all(np.isfinite(optimal_U)) and np.all(np.isfinite(optimal_X))):
+                return {
+                    'acceleration': 0.0,
+                    'steering': 0.0,
+                    'success': False,
+                    'solve_time': time.time() - start_time,
+                    'error': 'Solution contains NaN/Inf values'
+                }
 
             # Store for warm start and jerk calculation
             self.previous_solution_U = optimal_U
@@ -319,10 +405,15 @@ class OptimizedMPCController:
             # Track performance
             self.solve_times.append(solve_time)
             self.solve_success_rate.append(1.0)
+            self.consecutive_failures = 0  # Reset consecutive failure counter
+
+            # Apply safety limits to outputs
+            acceleration = float(np.clip(optimal_U[0, 0], -2.0, 2.0))  # Reasonable acceleration limits
+            steering = float(np.clip(optimal_U[1, 0], -0.5, 0.5))      # Reasonable steering limits
 
             result = {
-                'acceleration': float(optimal_U[0, 0]),
-                'steering': float(optimal_U[1, 0]),
+                'acceleration': acceleration,
+                'steering': steering,
                 'success': True,
                 'solve_time': solve_time,
                 'predicted_states': optimal_X,
@@ -341,9 +432,10 @@ class OptimizedMPCController:
             # Track failed solve
             self.solve_times.append(solve_time)
             self.solve_success_rate.append(0.0)
+            self.consecutive_failures += 1
 
             if self.enable_logging:
-                print(f"❌ MPC solve failed: {e}")
+                print(f"❌ MPC solve failed (consecutive: {self.consecutive_failures}): {e}")
 
             return {
                 'acceleration': 0.0,
@@ -352,6 +444,52 @@ class OptimizedMPCController:
                 'solve_time': solve_time,
                 'error': str(e)
             }
+
+    def _validate_inputs(self, current_state, reference_trajectory):
+        """Validate inputs for numerical stability"""
+        try:
+            # Validate current state
+            required_keys = ['x', 'y', 'v', 'theta']
+            if self.mpc_type == MPCType.DYNAMIC:
+                required_keys.extend(['beta', 'r'])
+
+            for key in required_keys[:4]:  # Always check basic kinematic states
+                if key not in current_state:
+                    return False
+                if not np.isfinite(current_state[key]):
+                    return False
+
+            # Check reasonable ranges
+            if abs(current_state['x']) > 1000 or abs(current_state['y']) > 1000:
+                return False
+            if current_state['v'] < -10 or current_state['v'] > 50:
+                return False
+            if abs(current_state['theta']) > 4 * np.pi:  # Allow some wrapping
+                return False
+
+            # Validate reference trajectory
+            if reference_trajectory is None or reference_trajectory.size == 0:
+                return False
+            if not np.all(np.isfinite(reference_trajectory)):
+                return False
+
+            # Check trajectory dimensions
+            expected_states = 4 if self.mpc_type == MPCType.KINEMATIC else 6
+            if reference_trajectory.shape[1] != expected_states:
+                return False
+            if reference_trajectory.shape[0] != self.N + 1:
+                return False
+            
+            # Check for problematic velocity values that cause infeasibility
+            velocities = reference_trajectory[:, 2]  # v is always the 3rd column
+            if np.any(velocities < 0.01):  # Too low velocities cause infeasibility
+                return False
+            if np.any(velocities > 50.0):  # Unreasonably high velocities
+                return False
+
+            return True
+        except BaseException:
+            return False
 
     def get_performance_stats(self):
         """Get comprehensive performance statistics"""
@@ -373,10 +511,11 @@ class OptimizedMPCController:
         }
 
     def reset_performance_tracking(self):
-        """Reset performance tracking metrics"""
+        """Reset performance tracking metrics and clear warm start"""
         self.solve_times.clear()
         self.solve_success_rate.clear()
         self.iteration_count = 0
+        self.consecutive_failures = 0
         self.previous_solution_U = None
         self.previous_solution_X = None
         self.previous_control = None

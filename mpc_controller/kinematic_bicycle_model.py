@@ -38,14 +38,12 @@ class KinematicBicycleModel(VehicleModel):
         a = ca.SX.sym('a')
         delta = ca.SX.sym('delta')
 
-        # Kinematic bicycle model with slip angle (simplified)
-        beta = ca.atan(0.5 * ca.tan(delta))  # Slip angle at center of mass
-
+        # Simplified kinematic bicycle model (no slip angle for stability)
         # State derivatives
-        xdot = v * ca.cos(theta + beta)
-        ydot = v * ca.sin(theta + beta)
+        xdot = v * ca.cos(theta)
+        ydot = v * ca.sin(theta)
         vdot = a
-        thetadot = (v / self.L) * ca.tan(delta)  # Simplified bicycle model
+        thetadot = (v / self.L) * ca.sin(delta)  # More stable than tan for small angles
 
         # Use Euler integration for stability
         state_next = ca.vertcat(
@@ -182,24 +180,28 @@ class KinematicConstraintsManager:
     def apply_constraints(self, opti, U, X, N):
         """Apply all constraints to the optimization problem for Kinematic model"""
 
-        # Control input constraints
-        opti.subject_to(opti.bounded(self.max_deceleration, U[0, :], self.max_acceleration))
-        opti.subject_to(opti.bounded(-self.max_steering_angle, U[1, :], self.max_steering_angle))
+        # Control input constraints with safety margins
+        opti.subject_to(opti.bounded(self.max_deceleration * 0.8, U[0, :], self.max_acceleration * 0.8))
+        opti.subject_to(opti.bounded(-self.max_steering_angle * 0.8, U[1, :], self.max_steering_angle * 0.8))
 
-        # Speed constraints (X[2] is velocity for kinematic model)
-        opti.subject_to(opti.bounded(self.min_speed, X[2, :], self.max_speed))
+        # Speed constraints (X[2] is velocity for kinematic model) - with margins
+        # Use a very small positive minimum to avoid infeasibility with zero velocity references
+        opti.subject_to(opti.bounded(0.01, X[2, :], self.max_speed * 0.9))
 
-        # Steering rate constraints (if hard constraints enabled)
+        # Steering rate constraints (only if hard constraints enabled and conservative)
         if self.enable_hard_constraints:
             for i in range(N - 1):
-                steering_rate = (U[1, i + 1] - U[1, i]) / 0.05  # Assuming dt = 0.05
-                opti.subject_to(opti.bounded(-self.max_steering_rate, steering_rate, self.max_steering_rate))
+                steering_rate = (U[1, i + 1] - U[1, i]) / 0.1  # More relaxed time step
+                opti.subject_to(opti.bounded(-self.max_steering_rate * 0.5,
+                                steering_rate, self.max_steering_rate * 0.5))
 
         # Safety constraints (simplified implementation)
         if self.enable_safety_checks:
-            # Add minimum distance between consecutive points
-            for i in range(N):
-                # Ensure minimum forward progress
-                if i > 0:
-                    position_diff = ca.sqrt((X[0, i] - X[0, i - 1])**2 + (X[1, i] - X[1, i - 1])**2)
-                    opti.subject_to(position_diff >= 0.01)  # Minimum movement
+            # Add minimum distance between consecutive points - but make it less restrictive
+            for i in range(1, N):  # Start from 1, not 0
+                # Ensure minimum forward progress - but relax the constraint
+                dx = X[0, i] - X[0, i - 1]
+                dy = X[1, i] - X[1, i - 1]
+                position_diff_squared = dx**2 + dy**2
+                # Much more relaxed constraint to avoid infeasibility
+                opti.subject_to(position_diff_squared >= 1e-8)  # Very small minimum movement
