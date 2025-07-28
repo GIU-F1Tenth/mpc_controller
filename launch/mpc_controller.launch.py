@@ -100,17 +100,17 @@ def generate_launch_description():
 
 
 # Usage examples:
-# Default - uses CSV-based trajectory publisher:
+
+# 1. Use config.py defaults with YAML override (default behavior):
 # ros2 launch mpc_controller mpc_controller.launch.py
 
-# CSV-based trajectory publisher with aggressive config:
+# 2. Use config.py defaults with aggressive YAML override:
 # ros2 launch mpc_controller mpc_controller.launch.py config:=params_aggressive
 
-# Use simple trajectory publisher with circle pattern:
-# ros2 launch mpc_controller mpc_controller.launch.py
-# use_simple_publisher:=true trajectory_type:=circle reference_speed:=2.0
+# 3. Use ONLY config.py defaults (no YAML override):
+# ros2 launch mpc_controller mpc_controller.launch.py use_yaml_config:=false
 
-# Simple publisher with conservative MPC settings and infinity pattern:
-# ros2 launch mpc_controller mpc_controller.launch.py
-# use_simple_publisher:=true config:=params_conservative
-# trajectory_type:=infinity
+# 4. Use simple trajectory publisher with config.py defaults only:
+# ros2 launch mpc_controller mpc_controller.launch.py \
+#   use_simple_publisher:=true use_yaml_config:=false \
+#   trajectory_type:=circle reference_speed:=2.0

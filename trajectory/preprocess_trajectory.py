@@ -6,27 +6,6 @@ import argparse
 import sys
 
 
-def compute_curvature(p1, p2, p3):
-    """Compute curvature using three points"""
-    x1, y1 = p1
-    x2, y2 = p2
-    x3, y3 = p3
-
-    a = math.hypot(x2 - x1, y2 - y1)
-    b = math.hypot(x3 - x2, y3 - y2)
-    c = math.hypot(x1 - x3, y1 - y3)
-
-    s = (a + b + c) / 2
-    area_squared = s * (s - a) * (s - b) * (s - c)
-
-    if area_squared <= 0 or a * b * c == 0:
-        return 0.0
-
-    area = math.sqrt(area_squared)
-    curvature = 4 * area / (a * b * c)
-    return curvature
-
-
 def process_csv(input_path, output_path, wheelbase=0.33, max_steering=0.5, min_velocity=0.1):
     """Process trajectory CSV file and add steering angles"""
     try:
@@ -38,14 +17,12 @@ def process_csv(input_path, output_path, wheelbase=0.33, max_steering=0.5, min_v
         N = len(data)
 
         for i in range(N):
-            # Circular indexing for 3-point fitting
+            # Get current and next point for heading calculation
             i1 = i % N
             i2 = (i + 1) % N
-            i3 = (i + 2) % N
 
             x1, y1 = float(data[i1]['x']), float(data[i1]['y'])
             x2, y2 = float(data[i2]['x']), float(data[i2]['y'])
-            x3, y3 = float(data[i3]['x']), float(data[i3]['y'])
             v = float(data[i1]['v'])
 
             # Ensure velocity is above minimum threshold for MPC stability
@@ -56,23 +33,16 @@ def process_csv(input_path, output_path, wheelbase=0.33, max_steering=0.5, min_v
             dy = y2 - y1
             theta = math.atan2(dy, dx)
 
-            # Calculate curvature and corresponding steering angle
-            curvature = compute_curvature((x1, y1), (x2, y2), (x3, y3))
-            delta = math.atan(wheelbase * curvature)
-
-            # Clamp steering angle to vehicle limits
-            delta = max(-max_steering, min(max_steering, delta))
-
+            # MPC controller will compute steering angles - no delta calculation here
             processed.append({
                 'x': x1,
                 'y': y1,
                 'v': v,
-                'theta': theta,
-                'delta': delta
+                'theta': theta
             })
 
         with open(output_path, 'w', newline='') as outfile:
-            fieldnames = ['x', 'y', 'v', 'theta', 'delta']
+            fieldnames = ['x', 'y', 'v', 'theta']
             writer = csv.DictWriter(outfile, fieldnames=fieldnames)
             writer.writeheader()
             for row in processed:
