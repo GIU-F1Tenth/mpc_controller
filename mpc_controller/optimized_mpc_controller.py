@@ -64,7 +64,14 @@ class SolverConfiguration:
 
 
 class OptimizedMPCController:
-    """Optimized Model Predictive Controller for F1TENTH Racing using all parameters"""
+    """
+    Optimized Model Predictive Controller for F1TENTH Racing using all parameters
+    
+    This controller computes optimal steering angles and acceleration commands
+    based on position and velocity references from the trajectory publisher.
+    The trajectory publisher only provides (x, y, v, theta) references - 
+    steering angles are computed by this MPC controller, not pre-calculated.
+    """
 
     def __init__(self,
                  N=10,
@@ -73,6 +80,7 @@ class OptimizedMPCController:
                  mpc_type=MPCType.KINEMATIC,
                  solver_type='ipopt',
                  enable_logging=True,
+                 logger=None,  # ROS2 logger for proper logging
                  # All parameters from params.yaml
                  max_steering_angle=0.5,
                  max_acceleration=1.0,
@@ -105,6 +113,7 @@ class OptimizedMPCController:
         self.mpc_type = mpc_type
         self.solver_type = solver_type
         self.enable_logging = enable_logging
+        self.logger = logger  # ROS2 logger for proper logging
         self.lookahead_distance = lookahead_distance
 
         # Store all parameters
@@ -177,15 +186,36 @@ class OptimizedMPCController:
 
         self._setup_mpc_problem()
 
+        # Initialize logging with proper output
         if self.enable_logging:
-            print(f"✅ Optimized MPC Controller initialized:")
-            print(f"   - Type: {mpc_type.value}")
-            print(f"   - Horizon: {N} steps, {T}s total")
-            print(f"   - Solver: {solver_type}")
-            print(f"   - Speed limits: {min_speed}-{max_speed} m/s")
-            print(f"   - Max steering: {max_steering_angle:.2f} rad")
-            print(f"   - Safety checks: {enable_safety_checks}")
-            print(f"   - Obstacle avoidance: {enable_obstacle_avoidance}")
+            self._log_initialization(mpc_type, N, T, solver_type, min_speed, max_speed, 
+                                   max_steering_angle, enable_safety_checks, enable_obstacle_avoidance)
+
+    def _log(self, level, message):
+        """Helper method for consistent logging"""
+        if self.logger:
+            if level == 'info':
+                self.logger.info(message)
+            elif level == 'warn':
+                self.logger.warn(message)
+            elif level == 'error':
+                self.logger.error(message)
+            elif level == 'debug':
+                self.logger.debug(message)
+        elif self.enable_logging:
+            print(f"[{level.upper()}] {message}")
+
+    def _log_initialization(self, mpc_type, N, T, solver_type, min_speed, max_speed, 
+                          max_steering_angle, enable_safety_checks, enable_obstacle_avoidance):
+        """Log initialization information"""
+        self._log('info', f"[MPC] ✅ Optimized MPC Controller initialized:")
+        self._log('info', f"[MPC]    - Type: {mpc_type.value}")
+        self._log('info', f"[MPC]    - Horizon: {N} steps, {T}s total")
+        self._log('info', f"[MPC]    - Solver: {solver_type}")
+        self._log('info', f"[MPC]    - Speed limits: {min_speed}-{max_speed} m/s")
+        self._log('info', f"[MPC]    - Max steering: {max_steering_angle:.2f} rad")
+        self._log('info', f"[MPC]    - Safety checks: {enable_safety_checks}")
+        self._log('info', f"[MPC]    - Obstacle avoidance: {enable_obstacle_avoidance}")
 
     def _setup_mpc_problem(self):
         """Setup the complete MPC optimization problem"""
@@ -346,7 +376,7 @@ class OptimizedMPCController:
             elif self.consecutive_failures >= 3:
                 # Reset warm start after consecutive failures
                 if self.enable_logging:
-                    print(f"⚠️ Resetting warm start after {self.consecutive_failures} consecutive failures")
+                    self._log('warn', f"[MPC] ⚠️ Resetting warm start after {self.consecutive_failures} consecutive failures")
                 self.previous_solution_U = None
                 self.previous_solution_X = None
 
@@ -356,7 +386,7 @@ class OptimizedMPCController:
             except Exception as solve_error:
                 # Try to get debug information if available
                 if self.enable_logging:
-                    print(f"🐛 Solver failed, attempting debug...")
+                    self._log('error', f"[MPC] 🐛 Solver failed, attempting debug...")
                     try:
                         # Get debug values to understand what went wrong
                         debug_U = self.opti.debug.value(self.U)
@@ -407,7 +437,8 @@ class OptimizedMPCController:
             self.solve_success_rate.append(1.0)
             self.consecutive_failures = 0  # Reset consecutive failure counter
 
-            # Apply safety limits to outputs
+            # Apply safety limits to optimal control outputs
+            # These are the MPC-computed steering angle and acceleration commands
             acceleration = float(np.clip(optimal_U[0, 0], -2.0, 2.0))  # Reasonable acceleration limits
             steering = float(np.clip(optimal_U[1, 0], -0.5, 0.5))      # Reasonable steering limits
 
@@ -421,8 +452,8 @@ class OptimizedMPCController:
             }
 
             if self.enable_logging and self.iteration_count % 50 == 0:
-                print(f"MPC solve #{self.iteration_count}: {solve_time:.4f}s, "
-                      f"a={result['acceleration']:.3f}, δ={result['steering']:.3f}")
+                self._log('info', f"[MPC] MPC solve #{self.iteration_count}: {solve_time:.4f}s, "
+                         f"a={result['acceleration']:.3f}, δ={result['steering']:.3f}")
 
             return result
 
@@ -435,7 +466,7 @@ class OptimizedMPCController:
             self.consecutive_failures += 1
 
             if self.enable_logging:
-                print(f"❌ MPC solve failed (consecutive: {self.consecutive_failures}): {e}")
+                self._log('error', f"[MPC] ❌ MPC solve failed (consecutive: {self.consecutive_failures}): {e}")
 
             return {
                 'acceleration': 0.0,

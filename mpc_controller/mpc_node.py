@@ -10,19 +10,16 @@ Author: Mohammed Azab <mohammed@azab.io>
 License: MIT
 Version: 2.0.0
 """
-
 import rclpy
 import numpy as np
 import time
 from rclpy.node import Node
-from rclpy.parameter import Parameter
-from rclpy.time import Time
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from ackermann_msgs.msg import AckermannDriveStamped
 from std_msgs.msg import Bool, Float32
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
-from giu_f1t_interfaces.msg import VehicleState, VehicleStateArray
+from giu_f1t_interfaces.msg import VehicleStateArray
 from tf_transformations import euler_from_quaternion
 
 try:
@@ -31,12 +28,51 @@ try:
 except ImportError:
     from optimized_mpc_controller import OptimizedMPCController
     from kinematic_bicycle_model import MPCType
+# Import configuration defaults
+import sys, os
+try:
+    # Try multiple paths to find config
+    possible_config_paths = [
+        os.path.join(os.path.dirname(__file__), '..', 'config'),  # Source tree
+        '/home/mohammedazab/ws/src/race_stack/config',  # Absolute path
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')  # Alternative relative
+    ]
+    
+    config_imported = False
+    for config_path in possible_config_paths:
+        if os.path.exists(config_path) and config_path not in sys.path:
+            sys.path.insert(0, config_path)
+            try:
+                import config as default_config
+                print(f"Using config.py defaults from {config_path}")
+                config_imported = True
+                break
+            except ImportError:
+                continue
+    
+    if not config_imported:
+        raise ImportError("Config module not found in any expected location")
+        
+except ImportError as e:
+    # Fallback if config.py is not available
+    print(f"Config file not found ({e}), using hardcoded defaults")
+    class default_config:
+        enable_trajectory_generation = True
+        optimal_trajectory_path = "/home/mohammedazab/ws/src/race_stack/mpc_controller/trajectory/optimal_trajectory.csv"
+        reference_trajectory_path = "/home/mohammedazab/ws/src/race_stack/mpc_controller/trajectory/ref_trajectory.csv"
+        horizon_N = 10
+        wheelbase = 0.33
+        max_steering_angle = 0.5
+        min_speed = 0.1
 
 
 class MPCNode(Node):
     def __init__(self):
         super().__init__('optimized_mpc_node')
 
+        # Check if YAML config override is enabled
+        self.yaml_config_enabled = getattr(default_config, 'yaml_config_enabled', True)
+        
         self._declare_all_parameters()
         self._load_all_parameters()
         self._initialize_optimized_mpc()
@@ -48,80 +84,146 @@ class MPCNode(Node):
         self.get_logger().info("MPC Node has been started 🏎️ ")
 
     def _declare_all_parameters(self):
-        """Declare all ROS2 parameters from params.yaml"""
+        """Declare all ROS2 parameters using config.py defaults"""
+
+        # Check if YAML config should override defaults
+        yaml_enabled = getattr(default_config, 'yaml_config_enabled', True)
+        
+        if yaml_enabled:
+            self.get_logger().info("🔧 Using config.py defaults with YAML override enabled")
+        else:
+            self.get_logger().info("🔧 Using config.py defaults with YAML override disabled")
 
         # Trajectory settings
-        self.declare_parameter('enable_trajectory_generation', True)
-        self.declare_parameter('optimal_trajectory_path', '')
-        self.declare_parameter('reference_trajectory_path', '')
+        self.declare_parameter('enable_trajectory_generation', 
+                             getattr(default_config, 'enable_trajectory_generation', True))
+        self.declare_parameter('optimal_trajectory_path', 
+                             getattr(default_config, 'optimal_trajectory_path', ''))
+        self.declare_parameter('reference_trajectory_path', 
+                             getattr(default_config, 'reference_trajectory_path', ''))
 
         # Vehicle parameters
-        self.declare_parameter('wheelbase', 0.33)
+        self.declare_parameter('wheelbase', 
+                             getattr(default_config, 'wheelbase', 0.33))
 
         # MPC Horizon
-        self.declare_parameter('horizon_N', 10)
-        self.declare_parameter('horizon_T', 1.0)
-        self.declare_parameter('lookahead_distance', 0.7)
+        self.declare_parameter('horizon_N', 
+                             getattr(default_config, 'horizon_N', 8))
+        self.declare_parameter('horizon_T', 
+                             getattr(default_config, 'horizon_T', 0.8))
+        self.declare_parameter('lookahead_distance', 
+                             getattr(default_config, 'lookahead_distance', 0.5))
 
         # Vehicle limits
-        self.declare_parameter('max_steering_angle', 0.5)
-        self.declare_parameter('max_acceleration', 1.0)
-        self.declare_parameter('max_deceleration', 1.0)
-        self.declare_parameter('min_speed', 0.1)
-        self.declare_parameter('max_speed', 2.0)
+        self.declare_parameter('max_steering_angle', 
+                             getattr(default_config, 'max_steering_angle', 0.9))
+        self.declare_parameter('max_acceleration', 
+                             getattr(default_config, 'max_acceleration', 2.8))
+        self.declare_parameter('max_deceleration', 
+                             getattr(default_config, 'max_deceleration', 2.8))
+        self.declare_parameter('min_speed', 
+                             getattr(default_config, 'min_speed', 0.1))
+        self.declare_parameter('max_speed', 
+                             getattr(default_config, 'max_speed', 8.0))
 
         # Cost function weights
-        self.declare_parameter('enable_cost_function_weights', True)
-        self.declare_parameter('cost_function_weights.steering_weight', 0.1)
-        self.declare_parameter('cost_function_weights.acceleration_weight', 0.1)
-        self.declare_parameter('cost_function_weights.jerk_weight', 0.1)
-        self.declare_parameter('cost_function_weights.heading_weight', 0.1)
-        self.declare_parameter('cost_function_weights.position_weight', 0.1)
-        self.declare_parameter('cost_function_weights.velocity_weight', 0.1)
+        self.declare_parameter('enable_cost_function_weights', 
+                             getattr(default_config, 'enable_cost_function_weights', True))
+        self.declare_parameter('cost_function_weights.steering_weight', 
+                             getattr(default_config, 'steering_weight', 1.0))
+        self.declare_parameter('cost_function_weights.acceleration_weight', 
+                             getattr(default_config, 'acceleration_weight', 0.5))
+        self.declare_parameter('cost_function_weights.jerk_weight', 
+                             getattr(default_config, 'jerk_weight', 0.1))
+        self.declare_parameter('cost_function_weights.heading_weight', 
+                             getattr(default_config, 'heading_weight', 2.0))
+        self.declare_parameter('cost_function_weights.position_weight', 
+                             getattr(default_config, 'position_weight', 5.0))
+        self.declare_parameter('cost_function_weights.velocity_weight', 
+                             getattr(default_config, 'velocity_weight', 1.0))
 
         # Hard constraints
-        self.declare_parameter('enable_hard_constraints', True)
-        self.declare_parameter('hard_constraints.max_steering_angle', 0.5)
-        self.declare_parameter('hard_constraints.max_acceleration', 1.0)
-        self.declare_parameter('hard_constraints.max_deceleration', 1.0)
+        self.declare_parameter('enable_hard_constraints', 
+                             getattr(default_config, 'enable_hard_constraints', False))
+        self.declare_parameter('hard_constraints.max_steering_angle', 
+                             getattr(default_config, 'hard_max_steering_angle', 0.4))
+        self.declare_parameter('hard_constraints.max_acceleration', 
+                             getattr(default_config, 'hard_max_acceleration', 0.8))
+        self.declare_parameter('hard_constraints.max_deceleration', 
+                             getattr(default_config, 'hard_max_deceleration', 0.8))
 
         # Obstacle avoidance
-        self.declare_parameter('enable_obstacle_avoidance', False)
-        self.declare_parameter('obstacle_avoidance_weight', 0.5)
+        self.declare_parameter('enable_obstacle_avoidance', 
+                             getattr(default_config, 'enable_obstacle_avoidance', False))
+        self.declare_parameter('obstacle_avoidance_weight', 
+                             getattr(default_config, 'obstacle_avoidance_weight', 0.5))
 
         # Speed control
-        self.declare_parameter('enable_speed_control', True)
-        self.declare_parameter('speed_control_weight', 0.3)
+        self.declare_parameter('enable_speed_control', 
+                             getattr(default_config, 'enable_speed_control', True))
+        self.declare_parameter('speed_control_weight', 
+                             getattr(default_config, 'speed_control_weight', 0.2))
 
         # Trajectory tracking
-        self.declare_parameter('enable_trajectory_tracking', True)
-        self.declare_parameter('trajectory_tracking_weight', 0.2)
+        self.declare_parameter('enable_trajectory_tracking', 
+                             getattr(default_config, 'enable_trajectory_tracking', True))
+        self.declare_parameter('trajectory_tracking_weight', 
+                             getattr(default_config, 'trajectory_tracking_weight', 0.1))
 
         # Safety checks
-        self.declare_parameter('enable_safety_checks', True)
-        self.declare_parameter('safety_check_distance', 0.5)
+        self.declare_parameter('enable_safety_checks', 
+                             getattr(default_config, 'enable_safety_checks', True))
+        self.declare_parameter('safety_check_distance', 
+                             getattr(default_config, 'safety_check_distance', 0.5))
 
         # Logging
-        self.declare_parameter('enable_logging', True)
+        self.declare_parameter('enable_logging', 
+                             getattr(default_config, 'enable_logging', True))
 
         # Additional MPC parameters
-        self.declare_parameter('mpc_type', 'kinematic')  # 'kinematic' or 'dynamic'
-        self.declare_parameter('solver_type', 'ipopt')   # 'ipopt' or 'sqpmethod'
-        self.declare_parameter('control_hz', 20.0)
+        self.declare_parameter('mpc_type', 
+                             getattr(default_config, 'mpc_type', 'kinematic'))
+        self.declare_parameter('solver_type', 
+                             getattr(default_config, 'solver_type', 'ipopt'))
+        self.declare_parameter('control_hz', 
+                             getattr(default_config, 'control_hz', 20.0))
 
         # Safety Parameters
-        self.declare_parameter('safety_timeout', 1.0)
-        self.declare_parameter('emergency_brake_threshold', 2.0)
+        self.declare_parameter('safety_timeout', 
+                             getattr(default_config, 'safety_timeout', 1.0))
+        self.declare_parameter('emergency_brake_threshold', 
+                             getattr(default_config, 'emergency_brake_threshold', 2.0))
 
         # Topics
-        self.declare_parameter('odom_topic', 'car_state/odom')
-        self.declare_parameter('reference_topic', '/mpc/reference_trajectory')
-        self.declare_parameter('status_topic', '/mpc/path_ready')
-        self.declare_parameter('control_topic', '/drive')
+        self.declare_parameter('odom_topic', 
+                             getattr(default_config, 'odom_topic', 'car_state/odom'))
+        self.declare_parameter('reference_topic', 
+                             getattr(default_config, 'reference_topic', '/mpc/reference_trajectory'))
+        self.declare_parameter('status_topic', 
+                             getattr(default_config, 'status_topic', '/mpc/path_ready'))
+        self.declare_parameter('control_topic', 
+                             getattr(default_config, 'control_topic', '/drive'))
         self.declare_parameter('pose_estimate_topic', '/initialpose')
 
         # QoS
-        self.declare_parameter('qos_depth', 10)
+        self.declare_parameter('qos_depth', 
+                             getattr(default_config, 'qos_depth', 10))
+        
+        # Debug and Logging settings
+        self.declare_parameter('debug_logging_enabled', 
+                             getattr(default_config, 'debug_logging_enabled', False))
+        self.declare_parameter('performance_logging_enabled', 
+                             getattr(default_config, 'performance_logging_enabled', True))
+        self.declare_parameter('state_logging_enabled', 
+                             getattr(default_config, 'state_logging_enabled', False))
+        self.declare_parameter('control_logging_enabled', 
+                             getattr(default_config, 'control_logging_enabled', True))
+        self.declare_parameter('trajectory_logging_enabled', 
+                             getattr(default_config, 'trajectory_logging_enabled', False))
+        self.declare_parameter('solver_logging_enabled', 
+                             getattr(default_config, 'solver_logging_enabled', False))
+        self.declare_parameter('log_frequency_divider', 
+                             getattr(default_config, 'log_frequency_divider', 10))
 
     def _load_all_parameters(self):
         """Load all parameters from ROS2 parameter server"""
@@ -183,6 +285,15 @@ class MPCNode(Node):
 
         # Logging
         self.enable_logging = self.get_parameter('enable_logging').value
+        
+        # Debug and Advanced Logging settings
+        self.debug_logging_enabled = self.get_parameter('debug_logging_enabled').value
+        self.performance_logging_enabled = self.get_parameter('performance_logging_enabled').value
+        self.state_logging_enabled = self.get_parameter('state_logging_enabled').value
+        self.control_logging_enabled = self.get_parameter('control_logging_enabled').value
+        self.trajectory_logging_enabled = self.get_parameter('trajectory_logging_enabled').value
+        self.solver_logging_enabled = self.get_parameter('solver_logging_enabled').value
+        self.log_frequency_divider = self.get_parameter('log_frequency_divider').value
 
         # Optimized MPC Parameters
         mpc_type_str = self.get_parameter('mpc_type').value
@@ -232,7 +343,8 @@ class MPCNode(Node):
                 trajectory_tracking_weight=self.trajectory_tracking_weight,
                 enable_safety_checks=self.enable_safety_checks,
                 safety_check_distance=self.safety_check_distance,
-                lookahead_distance=self.lookahead_distance
+                lookahead_distance=self.lookahead_distance,
+                logger=self.get_logger()  # Pass ROS2 logger to controller
             )
 
             self.get_logger().info("✅ Optimized MPC Controller initialized successfully")
@@ -271,6 +383,8 @@ class MPCNode(Node):
         self.last_odom_time = None
         self.control_active = False
         self.emergency_stop = False
+        self.emergency_stop_time = None  # Track when emergency stop was activated
+        self.emergency_recovery_timeout = 2.0  # Allow recovery after 2 seconds
 
         # Performance metrics
         self.control_loop_times = []
@@ -280,6 +394,29 @@ class MPCNode(Node):
         self.first_odom_received = False
         self.consecutive_mpc_failures = 0
         self.last_successful_solve_time = None
+        
+        # Debug logging state tracking
+        self.log_counter = 0
+        self.total_mpc_solves = 0
+        self.successful_mpc_solves = 0
+        self.failed_mpc_solves = 0
+        self.total_solve_time = 0.0
+        self.max_solve_time = 0.0
+        self.min_solve_time = float('inf')
+        
+        # State logging buffers
+        self.recent_states = []
+        self.recent_controls = []
+        self.recent_solve_times = []
+        
+        # Trajectory tracking metrics
+        self.trajectory_updates_received = 0
+        self.valid_trajectory_updates = 0
+        self.current_trajectory_length = 0
+        
+        # Performance alerts
+        self.slow_solve_threshold = 0.05  # 50ms
+        self.slow_solve_count = 0
 
     def _setup_subscriptions(self):
         """Setup ROS2 subscriptions"""
@@ -356,7 +493,8 @@ class MPCNode(Node):
             # Validate odometry message
             if not self._validate_odometry_msg(msg):
                 if self.enable_logging and not self.first_odom_received:
-                    self.get_logger().warn("Received invalid odometry message, skipping update")
+                    #self.get_logger().warn("Received invalid odometry message, skipping update")
+                    pass
                 return
 
             self.current_pose = msg.pose.pose
@@ -403,15 +541,48 @@ class MPCNode(Node):
 
             self.last_odom_time = self.get_clock().now()
 
+            # State logging for debugging
+            if self.state_logging_enabled and self.log_counter % (self.log_frequency_divider * 2) == 0:
+                self.get_logger().info(
+                    f"[STATE] Vehicle: X={self.current_pose.position.x:.3f}, Y={self.current_pose.position.y:.3f}, "
+                    f"V={self.current_velocity:.3f}, Yaw={np.degrees(self.current_yaw):.1f}°")
+                if self.mpc_type == MPCType.DYNAMIC:
+                    self.get_logger().info(
+                        f"[STATE] Dynamic: Beta={np.degrees(self.current_beta):.1f}°, "
+                        f"YawRate={np.degrees(self.current_yaw_rate):.1f}°/s")
+            
+            # Track recent states for debugging
+            current_state_data = {
+                'time': time.time(),
+                'x': self.current_pose.position.x,
+                'y': self.current_pose.position.y,
+                'v': self.current_velocity,
+                'yaw': self.current_yaw
+            }
+            if self.mpc_type == MPCType.DYNAMIC:
+                current_state_data.update({
+                    'beta': self.current_beta,
+                    'yaw_rate': self.current_yaw_rate
+                })
+            
+            self.recent_states.append(current_state_data)
+            if len(self.recent_states) > 50:  # Keep last 50 states
+                self.recent_states.pop(0)
+
             if not self.first_odom_received:
                 self.first_odom_received = True
                 self.state_initialized = True
                 if self.enable_logging:
-                    self.get_logger().info("First valid odometry received, MPC ready for operation")
+                    self.get_logger().info("[STATE] ✅ First valid odometry received, MPC ready for operation")
+                    self.get_logger().info(f"[STATE] Initial state: X={self.current_pose.position.x:.3f}, "
+                                         f"Y={self.current_pose.position.y:.3f}, V={self.current_velocity:.3f}")
 
         except Exception as e:
             if self.enable_logging:
-                self.get_logger().error(f"Error processing odometry: {e}")
+                self.get_logger().error(f"[ERROR] Error processing odometry: {e}")
+                if self.debug_logging_enabled:
+                    import traceback
+                    self.get_logger().error(f"[DEBUG] Odometry error traceback: {traceback.format_exc()}")
 
     def _validate_odometry_msg(self, msg):
         """Validate odometry message for numerical stability"""
@@ -446,21 +617,39 @@ class MPCNode(Node):
 
     def _reference_callback(self, msg: VehicleStateArray):
         """Process reference trajectory with robust numerical validation"""
+        
+        # Update trajectory tracking metrics
+        self.trajectory_updates_received += 1
 
         if len(msg.states) < 2:  # Need at least 2 points to calculate heading
-            self.get_logger().warn(f"Reference trajectory too short: {len(msg.states)} < 2 (minimum)")
+            self.get_logger().warn(f"[TRAJ] Reference trajectory too short: {len(msg.states)} < 2 (minimum)")
             return
+
+        # Log trajectory reception
+        if self.trajectory_logging_enabled and self.debug_logging_enabled:
+            self.get_logger().info(f"[TRAJ] Received trajectory with {len(msg.states)} states")
 
         # Convert to numpy array for MPC with validation
         self.reference_trajectory = []
+        invalid_states = 0
+        
         for i, state in enumerate(msg.states):
             # Validate state values for numerical stability
             if not self._validate_state_values(state):
-                self.get_logger().warn(f"Invalid state values detected at index {i}, skipping trajectory update")
-                return
+                invalid_states += 1
+                if self.debug_logging_enabled:
+                    self.get_logger().warn(f"[DEBUG] Invalid state values at index {i}: x={state.x}, y={state.y}, v={state.v}")
+                if invalid_states > 3:  # Reject trajectory if too many invalid states
+                    self.get_logger().error(f"[TRAJ] Too many invalid states ({invalid_states}), rejecting trajectory update")
+                    if self.debug_logging_enabled:
+                        # Log some sample invalid states for debugging
+                        self.get_logger().error(f"[DEBUG] First invalid state example: x={msg.states[0].x}, y={msg.states[0].y}, v={msg.states[0].v}")
+                        if len(msg.states) > 1:
+                            self.get_logger().error(f"[DEBUG] Last invalid state example: x={msg.states[-1].x}, y={msg.states[-1].y}, v={msg.states[-1].v}")
+                    return
 
             if self.mpc_type == MPCType.KINEMATIC:
-                # Use theta from VehicleState if available, otherwise calculate from trajectory points
+                # Use theta from VehicleState if available and valid, otherwise calculate from trajectory points
                 if hasattr(state, 'theta') and abs(state.theta) > 1e-6:  # More robust check
                     theta = state.theta
                 else:
@@ -470,23 +659,38 @@ class MPCNode(Node):
                         dx = next_state.x - state.x
                         dy = next_state.y - state.y
                         # Validate heading calculation inputs
-                        if abs(dx) < 1e-8 and abs(dy) < 1e-8:
-                            # Points are too close, use previous theta or current yaw
-                            theta = self.current_yaw if self.current_yaw is not None else 0.0
+                        distance = np.sqrt(dx*dx + dy*dy)
+                        if distance < 1e-6:  # Points are too close, use previous theta or current yaw
+                            if i > 0 and len(self.reference_trajectory) > 0:
+                                # Use previous trajectory point's theta
+                                theta = self.reference_trajectory[-1][3]
+                            else:
+                                # Use current yaw as fallback
+                                theta = self.current_yaw if self.current_yaw is not None and np.isfinite(self.current_yaw) else 0.0
                         else:
                             theta = np.arctan2(dy, dx)
                     else:
-                        # Use current heading for last point, with fallback
-                        theta = self.current_yaw if self.current_yaw is not None else 0.0
+                        # For the last point, use previous trajectory point's theta or current yaw
+                        if i > 0 and len(self.reference_trajectory) > 0:
+                            theta = self.reference_trajectory[-1][3]
+                        else:
+                            theta = self.current_yaw if self.current_yaw is not None and np.isfinite(self.current_yaw) else 0.0
 
-                # Ensure theta is normalized to [-pi, pi]
-                theta = np.arctan2(np.sin(theta), np.cos(theta))
+                # Ensure theta is normalized to [-pi, pi] and finite
+                if not np.isfinite(theta):
+                    theta = 0.0
+                    if self.debug_logging_enabled:
+                        self.get_logger().warn(f"[DEBUG] Non-finite theta at index {i}, using 0.0")
+                else:
+                    theta = np.arctan2(np.sin(theta), np.cos(theta))
 
+                # Build reference trajectory state vector (x, y, v, theta only)
+                # NOTE: Steering angles are computed by MPC, not from trajectory publisher
                 self.reference_trajectory.append([
-                    float(state.x), float(state.y), float(max(0.1, state.v)), float(theta)
+                    float(state.x), float(state.y), float(state.v if state.v > 0.01 else 0.01), float(theta)
                 ])
             else:  # DYNAMIC
-                # Use theta from VehicleState if available, otherwise calculate from trajectory points
+                # Use theta from VehicleState if available and valid, otherwise calculate from trajectory points
                 if hasattr(state, 'theta') and abs(state.theta) > 1e-6:
                     theta = state.theta
                 else:
@@ -496,33 +700,88 @@ class MPCNode(Node):
                         dx = next_state.x - state.x
                         dy = next_state.y - state.y
                         # Validate heading calculation inputs
-                        if abs(dx) < 1e-8 and abs(dy) < 1e-8:
-                            theta = self.current_yaw if self.current_yaw is not None else 0.0
+                        distance = np.sqrt(dx*dx + dy*dy)
+                        if distance < 1e-6:  # Points are too close
+                            if i > 0 and len(self.reference_trajectory) > 0:
+                                # Use previous trajectory point's theta
+                                theta = self.reference_trajectory[-1][3]
+                            else:
+                                # Use current yaw as fallback
+                                theta = self.current_yaw if self.current_yaw is not None and np.isfinite(self.current_yaw) else 0.0
                         else:
                             theta = np.arctan2(dy, dx)
                     else:
-                        theta = self.current_yaw if self.current_yaw is not None else 0.0
+                        # For the last point, use previous trajectory point's theta or current yaw
+                        if i > 0 and len(self.reference_trajectory) > 0:
+                            theta = self.reference_trajectory[-1][3]
+                        else:
+                            theta = self.current_yaw if self.current_yaw is not None and np.isfinite(self.current_yaw) else 0.0
 
-                # Ensure theta is normalized to [-pi, pi]
-                theta = np.arctan2(np.sin(theta), np.cos(theta))
+                # Ensure theta is normalized to [-pi, pi] and finite
+                if not np.isfinite(theta):
+                    theta = 0.0
+                    if self.debug_logging_enabled:
+                        self.get_logger().warn(f"[DEBUG] Non-finite theta at index {i}, using 0.0")
+                else:
+                    theta = np.arctan2(np.sin(theta), np.cos(theta))
 
+                # Build reference trajectory state vector (x, y, v, theta, beta=0, r=0)
+                # NOTE: Steering angles are computed by MPC, not from trajectory publisher
                 self.reference_trajectory.append([
-                    float(state.x), float(state.y), float(max(0.1, state.v)), float(theta), 0.0, 0.0  # beta=0, r=0 for reference
+                    float(state.x), float(state.y), float(state.v if state.v > 0.01 else 0.01), float(theta), 0.0, 0.0  # beta=0, r=0 for reference
                 ])
 
         self.reference_trajectory = np.array(self.reference_trajectory)
 
         # Final validation of the complete trajectory
         if not self._validate_trajectory(self.reference_trajectory):
-            self.get_logger().error("Reference trajectory contains invalid values, rejecting update")
+            self.get_logger().error("[TRAJ] Reference trajectory contains invalid values, rejecting update")
+            if self.debug_logging_enabled:
+                # Log detailed trajectory information for debugging
+                traj_array = np.array(self.reference_trajectory)
+                self.get_logger().error(f"[DEBUG] Failed trajectory shape: {traj_array.shape}")
+                self.get_logger().error(f"[DEBUG] Failed trajectory sample (first 3 points):")
+                for i in range(min(3, len(traj_array))):
+                    self.get_logger().error(f"[DEBUG] Point {i}: {traj_array[i]}")
+                if len(traj_array) > 3:
+                    self.get_logger().error(f"[DEBUG] Failed trajectory sample (last 3 points):")
+                    for i in range(max(0, len(traj_array)-3), len(traj_array)):
+                        self.get_logger().error(f"[DEBUG] Point {i}: {traj_array[i]}")
+                # Log statistics
+                if len(traj_array) > 0:
+                    self.get_logger().error(f"[DEBUG] Trajectory stats:")
+                    self.get_logger().error(f"[DEBUG] X: min={np.min(traj_array[:, 0]):.3f}, max={np.max(traj_array[:, 0]):.3f}")
+                    self.get_logger().error(f"[DEBUG] Y: min={np.min(traj_array[:, 1]):.3f}, max={np.max(traj_array[:, 1]):.3f}")
+                    self.get_logger().error(f"[DEBUG] V: min={np.min(traj_array[:, 2]):.3f}, max={np.max(traj_array[:, 2]):.3f}")
+                    if traj_array.shape[1] > 3:
+                        self.get_logger().error(f"[DEBUG] Theta: min={np.min(traj_array[:, 3]):.3f}, max={np.max(traj_array[:, 3]):.3f}")
             return
 
+        # Update tracking metrics
+        self.valid_trajectory_updates += 1
+        self.current_trajectory_length = len(self.reference_trajectory)
         self.last_trajectory_time = self.get_clock().now()
 
-        # Debug logging for received trajectory
-        if self.enable_logging:
+        # Enhanced trajectory logging
+        if self.trajectory_logging_enabled:
+            traj_array = np.array(self.reference_trajectory)
             self.get_logger().info(
-                f"Received reference trajectory with {len(self.reference_trajectory)} points (horizon_N={self.horizon_N})")
+                f"[TRAJ] ✅ Accepted trajectory: {len(self.reference_trajectory)} points, "
+                f"X: [{np.min(traj_array[:, 0]):.2f}, {np.max(traj_array[:, 0]):.2f}], "
+                f"Y: [{np.min(traj_array[:, 1]):.2f}, {np.max(traj_array[:, 1]):.2f}], "
+                f"V: [{np.min(traj_array[:, 2]):.2f}, {np.max(traj_array[:, 2]):.2f}]")
+        elif self.enable_logging:
+            pass
+            #self.get_logger().info(
+            #    f"[TRAJ] Received reference trajectory with {len(self.reference_trajectory)} points (horizon_N={self.horizon_N})")
+        
+        # Log trajectory update statistics periodically
+        if self.performance_logging_enabled and self.trajectory_updates_received % 50 == 0:
+            success_rate = (self.valid_trajectory_updates / self.trajectory_updates_received) * 100
+            self.get_logger().info(
+                f"[TRAJ] Trajectory stats: {self.trajectory_updates_received} received, "
+                f"{self.valid_trajectory_updates} valid ({success_rate:.1f}%), "
+                f"Current length: {self.current_trajectory_length}, Invalid states: {invalid_states}")
 
     def _validate_state_values(self, state):
         """Validate individual state values for numerical stability"""
@@ -532,30 +791,58 @@ class MPCNode(Node):
             if hasattr(state, 'theta'):
                 values.append(state.theta)
 
-            for val in values:
+            for i, val in enumerate(values):
                 if not np.isfinite(val):
+                    if self.debug_logging_enabled:
+                        field_names = ['x', 'y', 'v', 'theta']
+                        self.get_logger().error(f"[DEBUG] Invalid state value: {field_names[i] if i < len(field_names) else f'field_{i}'} = {val}")
                     return False
 
             # Check for reasonable ranges
             if abs(state.x) > 1000 or abs(state.y) > 1000:  # Position bounds
+                if self.debug_logging_enabled:
+                    self.get_logger().error(f"[DEBUG] State position out of bounds: x={state.x}, y={state.y}")
                 return False
-            if state.v < -10 or state.v > 50:  # Velocity bounds
+            if state.v < -2 or state.v > 25:  # F1TENTH appropriate velocity bounds
+                if self.debug_logging_enabled:
+                    self.get_logger().error(f"[DEBUG] State velocity out of bounds: v={state.v}")
                 return False
             if hasattr(state, 'theta') and abs(state.theta) > 10:  # Angle bounds
+                if self.debug_logging_enabled:
+                    self.get_logger().error(f"[DEBUG] State theta out of bounds: theta={state.theta}")
                 return False
 
             return True
-        except BaseException:
+        except Exception as e:
+            if self.debug_logging_enabled:
+                self.get_logger().error(f"[DEBUG] State validation exception: {e}")
             return False
 
     def _validate_trajectory(self, trajectory):
         """Validate complete trajectory for numerical stability"""
         try:
             if trajectory is None or len(trajectory) == 0:
+                if self.debug_logging_enabled:
+                    self.get_logger().error("[DEBUG] Trajectory validation failed: None or empty trajectory")
                 return False
 
             # Check for NaN or infinite values
             if not np.all(np.isfinite(trajectory)):
+                if self.debug_logging_enabled:
+                    nan_mask = ~np.isfinite(trajectory)
+                    nan_indices = np.where(nan_mask)
+                    self.get_logger().error(f"[DEBUG] Trajectory validation failed: NaN/Inf values at indices {list(zip(nan_indices[0], nan_indices[1]))}")
+                    # Log first few invalid values for debugging
+                    for i in range(min(5, len(nan_indices[0]))):
+                        row, col = nan_indices[0][i], nan_indices[1][i]
+                        self.get_logger().error(f"[DEBUG] Invalid value at [{row},{col}]: {trajectory[row, col]}")
+                return False
+
+            # Check trajectory shape
+            expected_cols = 4 if self.mpc_type == MPCType.KINEMATIC else 6
+            if trajectory.shape[1] != expected_cols:
+                if self.debug_logging_enabled:
+                    self.get_logger().error(f"[DEBUG] Trajectory validation failed: Wrong shape {trajectory.shape}, expected columns: {expected_cols}")
                 return False
 
             # Check trajectory smoothness (no sudden jumps)
@@ -564,16 +851,56 @@ class MPCNode(Node):
                 position_diffs = np.linalg.norm(diffs[:, :2], axis=1)  # x,y differences
 
                 # Check for unreasonably large position jumps (>5m between points)
-                if np.any(position_diffs > 5.0):
+                large_jumps = position_diffs > 5.0
+                if np.any(large_jumps):
+                    if self.debug_logging_enabled:
+                        jump_indices = np.where(large_jumps)[0]
+                        self.get_logger().error(f"[DEBUG] Trajectory validation failed: Large position jumps detected")
+                        for idx in jump_indices[:3]:  # Log first 3 large jumps
+                            self.get_logger().error(f"[DEBUG] Large jump at index {idx}: {position_diffs[idx]:.3f}m between points {idx} and {idx+1}")
+                            self.get_logger().error(f"[DEBUG] Point {idx}: [{trajectory[idx, 0]:.3f}, {trajectory[idx, 1]:.3f}]")
+                            self.get_logger().error(f"[DEBUG] Point {idx+1}: [{trajectory[idx+1, 0]:.3f}, {trajectory[idx+1, 1]:.3f}]")
                     return False
 
-                # Check for unreasonably large velocity jumps (>10 m/s between points)
+                # Check for unreasonably large velocity jumps (>20 m/s between points for F1TENTH)
                 velocity_diffs = np.abs(diffs[:, 2])
-                if np.any(velocity_diffs > 10.0):
+                large_vel_jumps = velocity_diffs > 20.0
+                if np.any(large_vel_jumps):
+                    if self.debug_logging_enabled:
+                        vel_jump_indices = np.where(large_vel_jumps)[0]
+                        self.get_logger().error(f"[DEBUG] Trajectory validation failed: Large velocity jumps detected")
+                        for idx in vel_jump_indices[:3]:  # Log first 3 large velocity jumps
+                            self.get_logger().error(f"[DEBUG] Large velocity jump at index {idx}: {velocity_diffs[idx]:.3f}m/s between points {idx} and {idx+1}")
+                            self.get_logger().error(f"[DEBUG] Velocity {idx}: {trajectory[idx, 2]:.3f}m/s")
+                            self.get_logger().error(f"[DEBUG] Velocity {idx+1}: {trajectory[idx+1, 2]:.3f}m/s")
                     return False
+
+            # Additional range checks
+            x_vals = trajectory[:, 0]
+            y_vals = trajectory[:, 1]
+            v_vals = trajectory[:, 2]
+
+            # Check position bounds
+            if np.any(np.abs(x_vals) > 1000) or np.any(np.abs(y_vals) > 1000):
+                if self.debug_logging_enabled:
+                    self.get_logger().error(f"[DEBUG] Trajectory validation failed: Position out of bounds")
+                    self.get_logger().error(f"[DEBUG] X range: [{np.min(x_vals):.3f}, {np.max(x_vals):.3f}]")
+                    self.get_logger().error(f"[DEBUG] Y range: [{np.min(y_vals):.3f}, {np.max(y_vals):.3f}]")
+                return False
+
+            # Check velocity bounds (more appropriate for F1TENTH racing)
+            if np.any(v_vals < -2) or np.any(v_vals > 25):
+                if self.debug_logging_enabled:
+                    self.get_logger().error(f"[DEBUG] Trajectory validation failed: Velocity out of bounds")
+                    self.get_logger().error(f"[DEBUG] Velocity range: [{np.min(v_vals):.3f}, {np.max(v_vals):.3f}]")
+                return False
 
             return True
-        except BaseException:
+        except Exception as e:
+            if self.debug_logging_enabled:
+                self.get_logger().error(f"[DEBUG] Trajectory validation failed with exception: {e}")
+                import traceback
+                self.get_logger().error(f"[DEBUG] Validation exception traceback: {traceback.format_exc()}")
             return False
 
     def _status_callback(self, msg: Bool):
@@ -613,6 +940,15 @@ class MPCNode(Node):
         """Main MPC control loop"""
 
         loop_start_time = time.time()
+
+        # Check for emergency stop recovery
+        if self.emergency_stop and self.emergency_stop_time is not None:
+            time_since_emergency = time.time() - self.emergency_stop_time
+            if time_since_emergency > self.emergency_recovery_timeout:
+                if self.debug_logging_enabled:
+                    self.get_logger().info(f"[RECOVERY] Attempting emergency stop recovery after {time_since_emergency:.1f}s")
+                self.emergency_stop = False
+                self.emergency_stop_time = None
 
         # Safety checks
         if not self._safety_checks():
@@ -701,15 +1037,22 @@ class MPCNode(Node):
         if self.last_odom_time:
             odom_age = (current_time - self.last_odom_time).nanoseconds / 1e9
             if odom_age > self.safety_timeout:
+                if self.debug_logging_enabled:
+                    self.get_logger().error(f"[SAFETY] Odometry timeout: {odom_age:.3f}s > {self.safety_timeout:.3f}s")
                 return False
 
         if self.last_trajectory_time:
             traj_age = (current_time - self.last_trajectory_time).nanoseconds / 1e9
             if traj_age > self.safety_timeout:
+                if self.debug_logging_enabled:
+                    self.get_logger().error(f"[SAFETY] Trajectory timeout: {traj_age:.3f}s > {self.safety_timeout:.3f}s")
                 return False
 
         # Check for excessive velocity
-        if self.current_velocity > self.emergency_brake_threshold * self.max_speed:
+        velocity_threshold = self.emergency_brake_threshold * self.max_speed
+        if self.current_velocity > velocity_threshold:
+            if self.debug_logging_enabled:
+                self.get_logger().error(f"[SAFETY] Excessive velocity: {self.current_velocity:.3f}m/s > {velocity_threshold:.3f}m/s")
             return False
 
         return True
@@ -727,7 +1070,7 @@ class MPCNode(Node):
         ]
 
         # Debug logging for data readiness
-        if self.enable_logging:
+        if self.enable_logging or self.debug_logging_enabled:
             ready = all(checks)
             if not ready:
                 failed_checks = []
@@ -744,7 +1087,16 @@ class MPCNode(Node):
                 if not checks[5]:
                     failed_checks.append("invalid_state")
 
-                self.get_logger().debug(f"Data not ready - Failed checks: {', '.join(failed_checks)}")
+                # Log more frequently when debug is enabled
+                if self.debug_logging_enabled or self.log_counter % (self.log_frequency_divider * 5) == 0:
+                    self.get_logger().warn(f"[DATA] Data not ready - Failed checks: {', '.join(failed_checks)}")
+                    # Additional context
+                    if not checks[3]:  # path_not_ready
+                        self.get_logger().warn(f"[DATA] Path ready status: {self.path_ready}")
+                    if not checks[4]:  # trajectory too short
+                        self.get_logger().warn(f"[DATA] Trajectory length: {len(self.reference_trajectory)}, required: >=2")
+                else:
+                    self.get_logger().debug(f"Data not ready - Failed checks: {', '.join(failed_checks)}")
 
         return all(checks)
 
@@ -795,9 +1147,10 @@ class MPCNode(Node):
                     reference_traj.append(last_point.copy())
 
                 if self.enable_logging:
-                    self.get_logger().info(
-                        f"Extended reference trajectory from {len(self.reference_trajectory)} to {len(reference_traj)} points")
-            else:
+                    pass
+                    #self.get_logger().info(
+                       # f"Extended reference trajectory from {len(self.reference_trajectory)} to {len(reference_traj)} points")
+            else:   
                 # Fallback: create a trajectory with current state
                 if self.mpc_type == MPCType.KINEMATIC:
                     fallback_point = [
@@ -837,13 +1190,91 @@ class MPCNode(Node):
                 f"Reference trajectory shape: {reference_traj.shape}, Expected: ({self.horizon_N + 1}, {4 if self.mpc_type == MPCType.KINEMATIC else 6})")
             self.get_logger().debug(f"Current state: {current_state}")
             # Log reference trajectory range for debugging
-            self.get_logger().debug(
-                f"Ref traj ranges - X: [{np.min(reference_traj[:, 0]):.2f}, {np.max(reference_traj[:, 0]):.2f}], "
-                f"Y: [{np.min(reference_traj[:, 1]):.2f}, {np.max(reference_traj[:, 1]):.2f}], "
-                f"V: [{np.min(reference_traj[:, 2]):.2f}, {np.max(reference_traj[:, 2]):.2f}]")
+            if self.debug_logging_enabled and self.log_counter % self.log_frequency_divider == 0:
+                self.get_logger().debug(
+                    f"[DEBUG] Ref traj ranges - X: [{np.min(reference_traj[:, 0]):.2f}, {np.max(reference_traj[:, 0]):.2f}], "
+                    f"Y: [{np.min(reference_traj[:, 1]):.2f}, {np.max(reference_traj[:, 1]):.2f}], "
+                    f"V: [{np.min(reference_traj[:, 2]):.2f}, {np.max(reference_traj[:, 2]):.2f}]")
+                self.get_logger().debug(f"[DEBUG] Current state: {current_state}")
+
+        # Log solve attempt
+        self.total_mpc_solves += 1
+        self.log_counter += 1
+        solve_start_time = time.time()
 
         # Solve MPC
         result = self.mpc_controller.solve_mpc(current_state, reference_traj)
+        
+        # Calculate solve time
+        solve_time = time.time() - solve_start_time
+        result['solve_time'] = solve_time
+        
+        # Update performance metrics
+        self.total_solve_time += solve_time
+        self.max_solve_time = max(self.max_solve_time, solve_time)
+        self.min_solve_time = min(self.min_solve_time, solve_time)
+        
+        # Track recent solve times
+        self.recent_solve_times.append(solve_time)
+        if len(self.recent_solve_times) > 100:  # Keep last 100 solve times
+            self.recent_solve_times.pop(0)
+        
+        # Log results based on success/failure
+        if result.get('success', False):
+            self.successful_mpc_solves += 1
+            self.consecutive_mpc_failures = 0
+            self.last_successful_solve_time = time.time()
+            
+            # Performance logging
+            if self.performance_logging_enabled:
+                if solve_time > self.slow_solve_threshold:
+                    self.slow_solve_count += 1
+                    self.get_logger().warn(f"[PERF] Slow MPC solve: {solve_time:.4f}s (threshold: {self.slow_solve_threshold:.3f}s)")
+                
+                # Log performance summary periodically
+                if self.log_counter % (self.log_frequency_divider * 10) == 0:
+                    avg_solve_time = self.total_solve_time / self.total_mpc_solves
+                    success_rate = (self.successful_mpc_solves / self.total_mpc_solves) * 100
+                    self.get_logger().info(
+                        f"[PERF] MPC Performance Summary - Solves: {self.total_mpc_solves}, "
+                        f"Success: {success_rate:.1f}%, Avg: {avg_solve_time:.4f}s, "
+                        f"Min/Max: {self.min_solve_time:.4f}s/{self.max_solve_time:.4f}s, "
+                        f"Slow solves: {self.slow_solve_count}")
+            
+            # Control logging
+            if self.control_logging_enabled and self.log_counter % self.log_frequency_divider == 0:
+                self.get_logger().info(
+                    f"[CTRL] MPC #{self.total_mpc_solves}: ✅ Success in {solve_time:.4f}s, "
+                    f"Accel: {result.get('acceleration', 0.0):.3f}, "
+                    f"Steering: {result.get('steering', 0.0):.3f} rad ({np.degrees(result.get('steering', 0.0)):.1f}°)")
+            
+            # Track recent successful controls
+            self.recent_controls.append({
+                'time': time.time(),
+                'acceleration': result.get('acceleration', 0.0),
+                'steering': result.get('steering', 0.0),
+                'solve_time': solve_time
+            })
+            if len(self.recent_controls) > 50:  # Keep last 50 controls
+                self.recent_controls.pop(0)
+                
+        else:
+            self.failed_mpc_solves += 1
+            self.consecutive_mpc_failures += 1
+            
+            # Error logging
+            error_msg = result.get('error', 'Unknown error')
+            self.get_logger().error(
+                f"[FAIL] MPC #{self.total_mpc_solves}: ❌ Failed in {solve_time:.4f}s, "
+                f"Consecutive failures: {self.consecutive_mpc_failures}, Error: {error_msg}")
+            
+            # Log debugging information on failure
+            if self.debug_logging_enabled:
+                self.get_logger().error(f"[DEBUG] Failed state: {current_state}")
+                self.get_logger().error(f"[DEBUG] Ref traj shape: {reference_traj.shape}")
+                if hasattr(self, 'mpc_controller') and hasattr(self.mpc_controller, 'get_debug_info'):
+                    debug_info = self.mpc_controller.get_debug_info()
+                    self.get_logger().error(f"[DEBUG] Controller state: {debug_info}")
 
         return result
 
@@ -927,8 +1358,15 @@ class MPCNode(Node):
         drive_msg.drive.steering_angle = 0.0
 
         self.control_publisher.publish(drive_msg)
-        self.emergency_stop = True
-        self.get_logger().warn("🚨 EMERGENCY STOP ACTIVATED")
+        
+        if not self.emergency_stop:  # Only log and set time on first activation
+            self.emergency_stop = True
+            self.emergency_stop_time = time.time()
+            self.get_logger().warn("🚨 EMERGENCY STOP ACTIVATED")
+        elif self.debug_logging_enabled and self.log_counter % (self.log_frequency_divider * 2) == 0:
+            # Reduced frequency logging when already in emergency stop
+            time_in_emergency = time.time() - (self.emergency_stop_time or 0)
+            self.get_logger().warn(f"🚨 EMERGENCY STOP ACTIVE ({time_in_emergency:.1f}s)")
 
     def _publish_diagnostics(self):
         """Publish diagnostics information with all parameters"""
