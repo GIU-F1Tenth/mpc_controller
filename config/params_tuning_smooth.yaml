@@ -1,0 +1,18 @@
+optimized_mpc_controller:
+  ros__parameters:
+    control_hz: 10.0
+    cost_function_weights:
+      acceleration_weight: 2.0
+      heading_weight: 2.0
+      jerk_weight: 1.0
+      position_weight: 10.0
+      steering_weight: 3.0
+      velocity_weight: 3.0
+    horizon_N: 10
+    horizon_T: 0.6
+    max_acceleration: 3.0
+    max_deceleration: 3.0
+    max_speed: 8.0
+    max_steering_angle: 0.5
+    mpc_type: kinematic
+    solver_type: ipopt
