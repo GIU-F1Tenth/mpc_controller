@@ -7,20 +7,20 @@ reference_trajectory_path= "/home/mohammedazab/ws/src/race_stack/mpc_controller/
 wheelbase= 0.33
 
 # MPC Horizon
-horizon_N= 13
-horizon_T= 0.8
-lookahead_distance= 0.5
+horizon_N= 25
+horizon_T= 0.3
+lookahead_distance= 0.3
 
 # Vehicle limits
-max_steering_angle= 0.9
-max_acceleration= 2.8
-max_deceleration= 2.8
+max_steering_angle= 0.5
+max_acceleration= 5
+max_deceleration= 7
 min_speed= 0.1
 max_speed= 8.0
 
 # Cost function weights
 enable_cost_function_weights= True
-steering_weight= 1.0
+steering_weight= 0.7
 acceleration_weight= 0.5
 jerk_weight= 0.1
 heading_weight= 2.0
@@ -47,7 +47,7 @@ trajectory_tracking_weight= 0.1
 
 # Safety checks
 enable_safety_checks= True
-safety_check_distance= 0.5
+safety_check_distance= 0.3
 
 # Logging
 enable_logging= True
@@ -55,16 +55,16 @@ enable_logging= True
 # Optimized MPC parameters
 mpc_type= "kinematic" # "kinematic" or "dynamic"
 solver_type= "ipopt" # "ipopt" or "sqpmethod"
-control_hz= 20.0
+control_hz= 15
 
 # Safety Parameters
 safety_timeout= 1.0
 emergency_brake_threshold= 2.0
 
 # Topics
-odom_topic= "car_state/odom"
-reference_topic= "/mpc/reference_trajectory"
-status_topic= "/mpc/path_ready"
+odom_topic= "/car_state/odom"
+reference_topic= "/horizon_mapper/reference_trajectory"
+status_topic= "/horizon_mapper/path_ready"
 control_topic= "/drive"
 
 # QoS

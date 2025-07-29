@@ -180,20 +180,20 @@ class KinematicConstraintsManager:
     def apply_constraints(self, opti, U, X, N):
         """Apply all constraints to the optimization problem for Kinematic model"""
 
-        # Control input constraints with safety margins
-        opti.subject_to(opti.bounded(self.max_deceleration * 0.8, U[0, :], self.max_acceleration * 0.8))
-        opti.subject_to(opti.bounded(-self.max_steering_angle * 0.8, U[1, :], self.max_steering_angle * 0.8))
+        # Control input constraints - use full limits for racing performance
+        opti.subject_to(opti.bounded(self.max_deceleration, U[0, :], self.max_acceleration))
+        opti.subject_to(opti.bounded(-self.max_steering_angle, U[1, :], self.max_steering_angle))
 
-        # Speed constraints (X[2] is velocity for kinematic model) - with margins
+        # Speed constraints (X[2] is velocity for kinematic model) - use full range
         # Use a very small positive minimum to avoid infeasibility with zero velocity references
-        opti.subject_to(opti.bounded(0.01, X[2, :], self.max_speed * 0.9))
+        opti.subject_to(opti.bounded(0.01, X[2, :], self.max_speed))
 
-        # Steering rate constraints (only if hard constraints enabled and conservative)
+        # Steering rate constraints (only if hard constraints enabled)
         if self.enable_hard_constraints:
             for i in range(N - 1):
-                steering_rate = (U[1, i + 1] - U[1, i]) / 0.1  # More relaxed time step
-                opti.subject_to(opti.bounded(-self.max_steering_rate * 0.5,
-                                steering_rate, self.max_steering_rate * 0.5))
+                steering_rate = (U[1, i + 1] - U[1, i]) / 0.1  # dt approximation
+                opti.subject_to(opti.bounded(-self.max_steering_rate,
+                                steering_rate, self.max_steering_rate))
 
         # Safety constraints (simplified implementation)
         if self.enable_safety_checks:
@@ -203,5 +203,5 @@ class KinematicConstraintsManager:
                 dx = X[0, i] - X[0, i - 1]
                 dy = X[1, i] - X[1, i - 1]
                 position_diff_squared = dx**2 + dy**2
-                # Much more relaxed constraint to avoid infeasibility
-                opti.subject_to(position_diff_squared >= 1e-8)  # Very small minimum movement
+                # Very small minimum movement to avoid numerical issues
+                opti.subject_to(position_diff_squared >= 1e-8)

@@ -772,8 +772,15 @@ class MPCNode(Node):
                 f"X: [{np.min(traj_array[:, 0]):.2f}, {np.max(traj_array[:, 0]):.2f}], "
                 f"Y: [{np.min(traj_array[:, 1]):.2f}, {np.max(traj_array[:, 1]):.2f}], "
                 f"V: [{np.min(traj_array[:, 2]):.2f}, {np.max(traj_array[:, 2]):.2f}]")
-        elif self.enable_logging:
-            pass
+        elif self.enable_logging and self.log_counter % (self.log_frequency_divider * 2) == 0:
+            # Log reference velocity info occasionally for debugging
+            if len(self.reference_trajectory) > 0:
+                traj_array = np.array(self.reference_trajectory)
+                ref_v_first = traj_array[0, 2]  # First reference velocity
+                ref_v_last = traj_array[-1, 2]  # Last reference velocity
+                ref_v_avg = np.mean(traj_array[:, 2])  # Average reference velocity
+                self.get_logger().info(
+                    f"[TRAJ] Reference velocities - First: {ref_v_first:.2f}, Last: {ref_v_last:.2f}, Avg: {ref_v_avg:.2f} m/s")
             #self.get_logger().info(
             #    f"[TRAJ] Received reference trajectory with {len(self.reference_trajectory)} points (horizon_N={self.horizon_N})")
         

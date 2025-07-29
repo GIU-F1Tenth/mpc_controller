@@ -437,10 +437,14 @@ class OptimizedMPCController:
             self.solve_success_rate.append(1.0)
             self.consecutive_failures = 0  # Reset consecutive failure counter
 
-            # Apply safety limits to optimal control outputs
+            # Apply safety limits to optimal control outputs using configured parameters
             # These are the MPC-computed steering angle and acceleration commands
-            acceleration = float(np.clip(optimal_U[0, 0], -2.0, 2.0))  # Reasonable acceleration limits
-            steering = float(np.clip(optimal_U[1, 0], -0.5, 0.5))      # Reasonable steering limits
+            acceleration = float(np.clip(optimal_U[0, 0], 
+                                       -self.max_deceleration, 
+                                       self.max_acceleration))
+            steering = float(np.clip(optimal_U[1, 0], 
+                                   -self.max_steering_angle, 
+                                   self.max_steering_angle))
 
             result = {
                 'acceleration': acceleration,
