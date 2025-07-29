@@ -14,19 +14,58 @@ import numpy as np
 from tf_transformations import euler_from_quaternion
 
 
+# Import configuration defaults
+import sys, os
+try:
+    # Try multiple paths to find config
+    possible_config_paths = [
+        os.path.join(os.path.dirname(__file__), '..', 'config'),  # Source tree
+        '/home/mohammedazab/ws/src/race_stack/config',  # Absolute path
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')  # Alternative relative
+    ]
+    
+    config_imported = False
+    for config_path in possible_config_paths:
+        if os.path.exists(config_path) and config_path not in sys.path:
+            sys.path.insert(0, config_path)
+            try:
+                import config as default_config
+                print(f"Using config.py defaults from {config_path}")
+                config_imported = True
+                break
+            except ImportError:
+                continue
+    
+    if not config_imported:
+        raise ImportError("Config module not found in any expected location")
+        
+except ImportError as e:
+    # Fallback if config.py is not available
+    print(f"Config file not found ({e}), using hardcoded defaults")
+    class default_config:
+        enable_trajectory_generation = True
+        optimal_trajectory_path = "/home/mohammedazab/ws/src/race_stack/mpc_controller/trajectory/optimal_trajectory.csv"
+        reference_trajectory_path = "/home/mohammedazab/ws/src/race_stack/mpc_controller/trajectory/ref_trajectory.csv"
+        horizon_N = 10
+        wheelbase = 0.33
+        max_steering_angle = 0.5
+        min_speed = 0.1
+
+
+
 class TrajectoryPublisherNode(Node):
 
     def __init__(self):
         super().__init__('trajectory_publisher_node')
 
         # Declare ROS2 parameters
-        self.declare_parameter('enable_logging', True)
-        self.declare_parameter('optimal_trajectory_path', '')
-        self.declare_parameter('reference_trajectory_path', '')
-        self.declare_parameter('horizon_N', 10)
-        self.declare_parameter('wheelbase', 0.33)
-        self.declare_parameter('max_steering_angle', 0.5)
-        self.declare_parameter('min_speed', 0.1)
+        self.declare_parameter('enable_logging', default_config.enable_logging)
+        self.declare_parameter('optimal_trajectory_path', default_config.optimal_trajectory_path)
+        self.declare_parameter('reference_trajectory_path', default_config.reference_trajectory_path)
+        self.declare_parameter('horizon_N', default_config.horizon_N)
+        self.declare_parameter('wheelbase', default_config.wheelbase)
+        self.declare_parameter('max_steering_angle', default_config.max_steering_angle)
+        self.declare_parameter('min_speed', default_config.min_speed)
 
         # Load parameters from ROS2 parameter server
         self.enable_logging = self.get_parameter('enable_logging').value
