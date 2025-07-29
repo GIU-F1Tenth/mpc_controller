@@ -13,6 +13,7 @@ Version: 2.0.0
 import rclpy
 import numpy as np
 import time
+import traceback
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
@@ -28,6 +29,7 @@ try:
 except ImportError:
     from optimized_mpc_controller import OptimizedMPCController
     from kinematic_bicycle_model import MPCType
+    
 # Import configuration defaults
 import sys, os
 try:
@@ -196,11 +198,11 @@ class MPCNode(Node):
 
         # Topics
         self.declare_parameter('odom_topic', 
-                             getattr(default_config, 'odom_topic', 'car_state/odom'))
+                             getattr(default_config, 'odom_topic', '/car_state/odom'))
         self.declare_parameter('reference_topic', 
-                             getattr(default_config, 'reference_topic', '/mpc/reference_trajectory'))
+                             getattr(default_config, 'reference_topic', '/horizon_mapper/reference_trajectory'))
         self.declare_parameter('status_topic', 
-                             getattr(default_config, 'status_topic', '/mpc/path_ready'))
+                             getattr(default_config, 'status_topic', '/horizon_mapper/path_ready'))
         self.declare_parameter('control_topic', 
                              getattr(default_config, 'control_topic', '/drive'))
         self.declare_parameter('pose_estimate_topic', '/initialpose')
@@ -521,7 +523,7 @@ class MPCNode(Node):
                 else:
                     if self.enable_logging:
                         self.get_logger().warn("Invalid yaw angle detected, keeping previous value")
-            except BaseException:
+            except Exception:
                 if self.enable_logging:
                     self.get_logger().warn("Failed to extract yaw angle from quaternion")
 
@@ -612,7 +614,7 @@ class MPCNode(Node):
                 return False
 
             return True
-        except BaseException:
+        except Exception:
             return False
 
     def _reference_callback(self, msg: VehicleStateArray):
@@ -850,8 +852,8 @@ class MPCNode(Node):
                 diffs = np.diff(trajectory, axis=0)
                 position_diffs = np.linalg.norm(diffs[:, :2], axis=1)  # x,y differences
 
-                # Check for unreasonably large position jumps (>5m between points)
-                large_jumps = position_diffs > 5.0
+                # Check for unreasonably large position jumps (>10m between points for F1TENTH racing)
+                large_jumps = position_diffs > 10.0
                 if np.any(large_jumps):
                     if self.debug_logging_enabled:
                         jump_indices = np.where(large_jumps)[0]
@@ -862,9 +864,9 @@ class MPCNode(Node):
                             self.get_logger().error(f"[DEBUG] Point {idx+1}: [{trajectory[idx+1, 0]:.3f}, {trajectory[idx+1, 1]:.3f}]")
                     return False
 
-                # Check for unreasonably large velocity jumps (>20 m/s between points for F1TENTH)
+                # Check for unreasonably large velocity jumps (>10 m/s between points for F1TENTH)
                 velocity_diffs = np.abs(diffs[:, 2])
-                large_vel_jumps = velocity_diffs > 20.0
+                large_vel_jumps = velocity_diffs > 10.0
                 if np.any(large_vel_jumps):
                     if self.debug_logging_enabled:
                         vel_jump_indices = np.where(large_vel_jumps)[0]
@@ -1134,48 +1136,49 @@ class MPCNode(Node):
 
         # Ensure reference trajectory has exactly the right size (N+1 points)
         if len(self.reference_trajectory) >= self.horizon_N + 1:
-            reference_traj = self.reference_trajectory[:self.horizon_N + 1]
+            reference_traj = np.array(self.reference_trajectory[:self.horizon_N + 1])
         else:
             # If we don't have enough points, extend the trajectory by repeating the last point
-            reference_traj = list(self.reference_trajectory)  # Convert to list for easier manipulation
-
-            if len(reference_traj) > 0:
-                last_point = reference_traj[-1].copy()
-
-                # Extend with the last point to reach N+1 total points
-                while len(reference_traj) < self.horizon_N + 1:
-                    reference_traj.append(last_point.copy())
-
-                if self.enable_logging:
-                    pass
-                    #self.get_logger().info(
-                       # f"Extended reference trajectory from {len(self.reference_trajectory)} to {len(reference_traj)} points")
+            if len(self.reference_trajectory) > 0:
+                # Create numpy array from existing trajectory
+                existing_traj = np.array(self.reference_trajectory)
+                last_point = existing_traj[-1].copy()
+                
+                # Calculate how many points we need to add
+                points_needed = (self.horizon_N + 1) - len(existing_traj)
+                
+                # Create extension array
+                extension = np.tile(last_point, (points_needed, 1))
+                
+                # Concatenate existing trajectory with extension
+                reference_traj = np.vstack([existing_traj, extension])
+                
+                if self.enable_logging and self.log_counter % (self.log_frequency_divider * 5) == 0:
+                    self.get_logger().debug(
+                        f"Extended reference trajectory from {len(self.reference_trajectory)} to {len(reference_traj)} points")
             else:   
                 # Fallback: create a trajectory with current state
                 if self.mpc_type == MPCType.KINEMATIC:
-                    fallback_point = [
+                    fallback_point = np.array([
                         current_state['x'],
                         current_state['y'],
                         max(0.1, current_state['v']),  # Ensure positive velocity
                         current_state['theta']
-                    ]
+                    ])
                 else:
-                    fallback_point = [
+                    fallback_point = np.array([
                         current_state['x'],
                         current_state['y'],
                         max(0.1, current_state['v']),  # Ensure positive velocity
                         current_state['theta'],
                         0.0, 0.0
-                    ]
+                    ])
 
-                reference_traj = [fallback_point] * (self.horizon_N + 1)
+                reference_traj = np.tile(fallback_point, (self.horizon_N + 1, 1))
 
                 if self.enable_logging:
                     self.get_logger().warn(
                         f"Created fallback reference trajectory with {len(reference_traj)} points using current state")
-
-        # Convert to numpy array if it isn't already
-        reference_traj = np.array(reference_traj)
 
         # Final validation of reference trajectory
         if not np.all(np.isfinite(reference_traj)):
@@ -1214,7 +1217,7 @@ class MPCNode(Node):
         self.max_solve_time = max(self.max_solve_time, solve_time)
         self.min_solve_time = min(self.min_solve_time, solve_time)
         
-        # Track recent solve times
+        # Track recent solve times with bounds checking
         self.recent_solve_times.append(solve_time)
         if len(self.recent_solve_times) > 100:  # Keep last 100 solve times
             self.recent_solve_times.pop(0)
@@ -1310,7 +1313,7 @@ class MPCNode(Node):
                     return False
 
             return True
-        except BaseException:
+        except Exception:
             return False
 
     def _publish_control_command(self, acceleration, steering_angle):
@@ -1320,7 +1323,8 @@ class MPCNode(Node):
         steering_angle = np.clip(steering_angle, -self.max_steering_angle, self.max_steering_angle)
 
         # Convert acceleration to velocity command
-        target_velocity = self.current_velocity + acceleration * (1.0 / self.control_hz)
+        dt = 1.0 / max(self.control_hz, 1.0)  # Prevent division by zero
+        target_velocity = self.current_velocity + acceleration * dt
         target_velocity = np.clip(target_velocity, self.min_speed, self.max_speed)
 
         # Create and publish drive command
