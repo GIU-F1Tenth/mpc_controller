@@ -26,9 +26,7 @@ setup(
     tests_require=['pytest', 'pytest-cov'],
     entry_points={
         'console_scripts': [
-            'mpc_node = mpc_controller.mpc_node:main',
-            'trajectory_publisher_node = trajectory.trajectory_publisher_node:main',
-            'simple_trajectory_publisher = trajectory.simple_trajectory_publisher:main',
+            'mpc_node = mpc_controller.mpc_node:main'
         ],
     },
 )
