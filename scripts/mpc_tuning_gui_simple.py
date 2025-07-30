@@ -1019,11 +1019,12 @@ class MPCTuningGUI:
     
     def load_preset(self, preset_name: str):
         """Load predefined parameter presets"""
+        BASE_CONFIG_DIR = os.getenv('BASE_CONFIG_DIR', './config')
         config_files = {
-            'conservative': '/home/mohammedazab/ws/src/race_stack/mpc_controller/config/params_conservative.yaml',
-            'balanced': '/home/mohammedazab/ws/src/race_stack/mpc_controller/config/params.yaml',
-            'aggressive': '/home/mohammedazab/ws/src/race_stack/mpc_controller/config/params_aggressive.yaml',
-            'precision': '/home/mohammedazab/ws/src/race_stack/mpc_controller/config/params_precision.yaml'
+            'conservative': os.path.join(BASE_CONFIG_DIR, 'params_conservative.yaml'),
+            'balanced': os.path.join(BASE_CONFIG_DIR, 'params.yaml'),
+            'aggressive': os.path.join(BASE_CONFIG_DIR, 'params_aggressive.yaml'),
+            'precision': os.path.join(BASE_CONFIG_DIR, 'params_precision.yaml')
         }
         
         if preset_name in config_files:
