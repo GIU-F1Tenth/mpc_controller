@@ -388,7 +388,9 @@ class MPCTuningGUI:
         self.current_params = MPCParameters()
         
         # Load initial parameters from precision config
-        self.load_config_file('/home/mohammedazab/ws/src/race_stack/mpc_controller/config/params_precision.yaml')
+        config_dir = os.getenv('MPC_CONFIG_DIR', './config')
+        precision_config_path = os.path.join(config_dir, 'params_precision.yaml')
+        self.load_config_file(precision_config_path)
         
         # Parameter widgets
         self.param_widgets = {}
