@@ -1,8 +1,3 @@
-# Trajectory settings
-enable_trajectory_generation= True
-optimal_trajectory_path= "/home/mohammedazab/ws/src/race_stack/mpc_controller/trajectory/optimal_trajectory.csv"
-reference_trajectory_path= "/home/mohammedazab/ws/src/race_stack/mpc_controller/trajectory/ref_trajectory.csv"
-
 # Vehicle parameters
 wheelbase= 0.33
 

@@ -1,10 +1,5 @@
 optimized_mpc_controller:
   ros__parameters:
-    # Trajectory settings
-    enable_trajectory_generation: true
-    optimal_trajectory_path: "/home/mohammedazab/ws/src/race_stack/myDev/mpc_controller/trajectory/optimal_trajectory.csv"
-    reference_trajectory_path: "/home/mohammedazab/ws/src/race_stack/myDev/mpc_controller/trajectory/reference_trajectory.csv"
-
     # Vehicle parameters
     wheelbase: 0.33
 

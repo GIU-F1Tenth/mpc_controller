@@ -1,10 +1,5 @@
 optimized_mpc_controller:
   ros__parameters:
-    # Trajectory settings
-    enable_trajectory_generation: true
-    optimal_trajectory_path: "/home/mohammedazab/ws/src/race_stack/mpc_controller/trajectory/optimal_trajectory.csv"
-    reference_trajectory_path: "/home/mohammedazab/ws/src/race_stack/mpc_controller/trajectory/ref_trajectory.csv"
-
     # Vehicle parameters
     wheelbase: 0.33
 
@@ -82,19 +77,3 @@ optimized_mpc_controller:
     trajectory_logging_enabled: false
     solver_logging_enabled: false
     log_frequency_divider: 10  # Log every N iterations
-
-
-trajectory_publisher_node:
-  ros__parameters:
-    # Trajectory file paths
-    enable_logging: false
-    optimal_trajectory_path: "/home/mohammedazab/ws/src/race_stack/mpc_controller/trajectory/optimal_trajectory.csv"
-    reference_trajectory_path: "/home/mohammedazab/ws/src/race_stack/mpc_controller/trajectory/ref_trajectory.csv"
-    odom_topic: "/car_state/odom"  # Add odom topic parameter
-    
-    # MPC parameters
-    horizon_N: 8
-    horizon_T: 0.5
-    wheelbase: 0.33
-    max_steering_angle: 0.5
-    min_speed: 0.1
