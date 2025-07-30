@@ -1,3 +1,139 @@
+"""
+F1TENTH Optimized Model Predictive Controller
+
+This module provides a high-performance Model Predictive Controller (MPC) implementation
+for F1TENTH autonomous racing platforms. The controller computes optimal steering and
+acceleration commands for trajectory tracking while respecting vehicle dynamics and
+safety constraints.
+
+Key Features:
+    - Dual vehicle models: Kinematic and Dynamic bicycle models
+    - Real-time optimization using CasADi with IPOPT/SQPMethod solvers
+    - Comprehensive cost function with configurable weights
+    - Safety constraints and emergency handling
+    - Performance monitoring and warm-start capabilities
+    - ROS2 integration with parameter server support
+
+Main Classes:
+    OptimizedMPCController: Core MPC implementation with solver and constraints
+    SolverConfiguration: Optimized solver settings for real-time performance
+    
+Vehicle Models (imported):
+    KinematicBicycleModel: Simple bicycle model for basic dynamics
+    DynamicBicycleModel: Advanced model with tire dynamics and slip effects
+    
+Cost Functions (imported):
+    KinematicCostFunction: Cost function for kinematic model
+    DynamicCostFunction: Cost function for dynamic model
+    
+Constraints (imported):
+    KinematicConstraintsManager: Constraint handling for kinematic model
+    DynamicConstraintsManager: Constraint handling for dynamic model
+
+Usage Examples:
+    Basic Kinematic MPC:
+        >>> from optimized_mpc_controller import OptimizedMPCController, MPCType
+        >>> mpc = OptimizedMPCController(
+        ...     N=10,                    # Prediction horizon
+        ...     T=1.0,                   # Time horizon
+        ...     wheelbase=0.33,          # Vehicle wheelbase
+        ...     mpc_type=MPCType.KINEMATIC,
+        ...     max_speed=5.0,
+        ...     max_steering_angle=0.5
+        ... )
+        
+    Solve MPC optimization:
+        >>> current_state = {
+        ...     'x': 0.0, 'y': 0.0, 'v': 2.0, 'theta': 0.0
+        ... }
+        >>> reference_trajectory = np.array([...])  # Shape: (N+1, 4)
+        >>> result = mpc.solve_mpc(current_state, reference_trajectory)
+        >>> if result['success']:
+        ...     acceleration = result['acceleration']
+        ...     steering = result['steering']
+        
+    Dynamic MPC with advanced features:
+        >>> mpc_dynamic = OptimizedMPCController(
+        ...     N=15,
+        ...     T=1.5,
+        ...     wheelbase=0.33,
+        ...     mpc_type=MPCType.DYNAMIC,
+        ...     solver_type='ipopt',
+        ...     enable_safety_checks=True,
+        ...     enable_obstacle_avoidance=True,
+        ...     cost_function_weights={
+        ...         'position_weight': 10.0,
+        ...         'heading_weight': 5.0,
+        ...         'velocity_weight': 1.0,
+        ...         'steering_weight': 0.1,
+        ...         'acceleration_weight': 0.1,
+        ...         'jerk_weight': 0.01
+        ...     }
+        ... )
+        
+    Performance monitoring:
+        >>> stats = mpc.get_performance_stats()
+        >>> print(f"Average solve time: {stats['avg_solve_time']:.4f}s")
+        >>> print(f"Success rate: {stats['success_rate']:.2%}")
+        >>> print(f"Real-time factor: {stats['real_time_factor']:.1f}x")
+        
+    Parameter updates (for real-time tuning):
+        >>> mpc.update_parameters(
+        ...     max_speed=8.0,
+        ...     max_steering_angle=0.6,
+        ...     enable_safety_checks=False
+        ... )
+
+Integration with ROS2:
+    This controller is designed to work with the MPC Node (mpc_node.py) which
+    handles ROS2 communication, parameter server integration, and real-time
+    parameter updates via the tuning GUI.
+    
+    The controller expects:
+        - Current vehicle state from odometry
+        - Reference trajectory from trajectory publisher
+        - Configuration parameters from ROS2 parameter server
+        
+    It provides:
+        - Optimal control commands (steering, acceleration)
+        - Performance diagnostics for monitoring
+        - Real-time parameter update capabilities
+
+Mathematical Foundation:
+    The MPC formulation minimizes a cost function over a finite horizon:
+    
+    minimize: Σ(||x_k - x_ref||_Q² + ||u_k||_R² + ||Δu_k||_S²)
+    
+    subject to:
+        x_{k+1} = f(x_k, u_k)     # Vehicle dynamics
+        u_min ≤ u_k ≤ u_max       # Input constraints  
+        x_min ≤ x_k ≤ x_max       # State constraints
+        
+    Where:
+        x_k: State vector [x, y, v, θ] or [x, y, v, θ, β, r]
+        u_k: Control vector [acceleration, steering_angle]
+        Q, R, S: Cost function weight matrices
+
+Safety Features:
+    - Input saturation with configurable limits
+    - State constraint enforcement  
+    - Emergency stop capabilities
+    - Numerical stability validation
+    - Fallback control on solver failure
+    - Consecutive failure detection and recovery
+
+Performance Optimizations:
+    - Warm-start from previous solutions
+    - Optimized solver configurations
+    - Minimal overhead logging
+    - Efficient constraint formulation
+    - Real-time factor monitoring
+
+Author: Mohammed Azab <mohammed@azab.io>
+License: MIT
+Version: 1.0.0
+"""
+
 import casadi as ca
 import numpy as np
 import time
@@ -24,7 +160,22 @@ except ImportError:
 
 
 class SolverConfiguration:
-    """Solver configuration for optimal performance"""
+    """
+    Solver configuration manager for optimal MPC performance.
+    
+    Provides optimized solver settings for both IPOPT and SQPMethod solvers,
+    tuned specifically for real-time F1TENTH racing applications.
+    
+    Key optimizations:
+        - Reduced iteration limits for real-time performance
+        - Relaxed tolerances for racing applications  
+        - Numerical stability enhancements
+        - Memory-efficient configurations
+        
+    Supported Solvers:
+        - 'ipopt': Interior Point Optimizer (default, most robust)
+        - 'sqpmethod': Sequential Quadratic Programming (faster, less robust)
+    """
 
     @staticmethod
     def get_solver_options(solver_type='ipopt'):
@@ -204,6 +355,16 @@ class OptimizedMPCController:
                 self.logger.debug(message)
         elif self.enable_logging:
             print(f"[{level.upper()}] {message}")
+    
+    def _is_debug_enabled(self):
+        """Check if debug logging is enabled"""
+        if self.logger:
+            # ROS2 logger debug level check
+            return self.logger.get_effective_level() <= 10  # DEBUG level
+        else:
+            # For standalone mode, check environment variable or default to False for performance
+            import os
+            return os.getenv('MPC_DEBUG', 'false').lower() in ('true', '1', 'yes')
 
     def _log_initialization(self, mpc_type, N, T, solver_type, min_speed, max_speed, 
                           max_steering_angle, enable_safety_checks, enable_obstacle_avoidance):
@@ -387,26 +548,31 @@ class OptimizedMPCController:
                 # Try to get debug information if available
                 if self.enable_logging:
                     self._log('error', f"[MPC] 🐛 Solver failed, attempting debug...")
-                    try:
-                        # Get debug values to understand what went wrong
-                        debug_U = self.opti.debug.value(self.U)
-                        debug_X = self.opti.debug.value(self.X)
-                        debug_X0 = self.opti.debug.value(self.X0)
-                        debug_X_ref = self.opti.debug.value(self.X_ref)
+                    
+                    # Only extract expensive debug information if debug logging is enabled
+                    if self._is_debug_enabled():
+                        try:
+                            # Get debug values to understand what went wrong
+                            debug_U = self.opti.debug.value(self.U)
+                            debug_X = self.opti.debug.value(self.X)
+                            debug_X0 = self.opti.debug.value(self.X0)
+                            debug_X_ref = self.opti.debug.value(self.X_ref)
 
-                        print(f"  Debug U shape: {debug_U.shape if debug_U is not None else 'None'}")
-                        print(f"  Debug X shape: {debug_X.shape if debug_X is not None else 'None'}")
-                        print(f"  Debug X0 finite: {np.all(np.isfinite(debug_X0)) if debug_X0 is not None else 'None'}")
-                        print(
-                            f"  Debug X_ref finite: {np.all(np.isfinite(debug_X_ref)) if debug_X_ref is not None else 'None'}")
+                            print(f"  Debug U shape: {debug_U.shape if debug_U is not None else 'None'}")
+                            print(f"  Debug X shape: {debug_X.shape if debug_X is not None else 'None'}")
+                            print(f"  Debug X0 finite: {np.all(np.isfinite(debug_X0)) if debug_X0 is not None else 'None'}")
+                            print(
+                                f"  Debug X_ref finite: {np.all(np.isfinite(debug_X_ref)) if debug_X_ref is not None else 'None'}")
 
-                        # Check for specific problematic values
-                        if debug_X_ref is not None:
-                            print(f"  X_ref range: X=[{np.min(debug_X_ref[0,:]):.3f}, {np.max(debug_X_ref[0,:]):.3f}], "
-                                  f"Y=[{np.min(debug_X_ref[1,:]):.3f}, {np.max(debug_X_ref[1,:]):.3f}], "
-                                  f"V=[{np.min(debug_X_ref[2,:]):.3f}, {np.max(debug_X_ref[2,:]):.3f}]")
-                    except BaseException:
-                        print(f"  Could not extract debug information")
+                            # Check for specific problematic values
+                            if debug_X_ref is not None:
+                                print(f"  X_ref range: X=[{np.min(debug_X_ref[0,:]):.3f}, {np.max(debug_X_ref[0,:]):.3f}], "
+                                      f"Y=[{np.min(debug_X_ref[1,:]):.3f}, {np.max(debug_X_ref[1,:]):.3f}], "
+                                      f"V=[{np.min(debug_X_ref[2,:]):.3f}, {np.max(debug_X_ref[2,:]):.3f}]")
+                        except BaseException:
+                            print(f"  Could not extract debug information")
+                    else:
+                        print(f"  Debug information extraction skipped (enable debug logging for details)")
 
                 raise solve_error
 
