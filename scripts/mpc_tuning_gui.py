@@ -439,7 +439,10 @@ class MPCTuningGUI(QMainWindow):
         self.setup_ui()
         
         # Load initial parameters from precision config after UI is set up
-        self.load_config_file('/home/mohammedazab/ws/src/race_stack/mpc_controller/config/params_precision.yaml')
+        # Dynamically construct the path to the configuration file
+        base_path = os.getenv('MPC_CONFIG_BASE_PATH', os.path.join(os.path.dirname(__file__), '..', 'config'))
+        config_file_path = os.path.join(base_path, 'params_precision.yaml')
+        self.load_config_file(config_file_path)
         
     def setup_timers(self):
         """Setup update and apply timers"""
