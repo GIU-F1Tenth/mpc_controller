@@ -8,7 +8,9 @@ import os
 import numpy as np
 
 # Add the package path to sys.path
-sys.path.append('/home/mohammedazab/ws/src/race_stack/myDev/mpc_controller')
+script_dir = os.path.dirname(os.path.abspath(__file__))
+package_path = os.path.join(script_dir, '..', 'src', 'race_stack', 'myDev', 'mpc_controller')
+sys.path.append(package_path)
 
 try:
     from mpc_controller.optimized_mpc_controller import OptimizedMPCController, MPCType
