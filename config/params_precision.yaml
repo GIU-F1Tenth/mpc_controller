@@ -1,0 +1,64 @@
+optimized_mpc_controller:
+  ros__parameters:
+    # Vehicle parameters
+    wheelbase: 0.33
+
+    # MPC Horizon - Optimized for precision
+    horizon_N: 12
+    horizon_T: 1.2
+    lookahead_distance: 0.8
+
+    # Vehicle limits - Optimized for precision racing
+    max_steering_angle: 0.45
+    max_acceleration: 1.5
+    max_deceleration: 1.8
+    min_speed: 0.15
+    max_speed: 6.0
+
+    # Cost function weights - Optimized for precision
+    enable_cost_function_weights: true
+    cost_function_weights:
+      steering_weight: 0.08 # Balanced steering penalty
+      acceleration_weight: 0.12 # Moderate acceleration penalty
+      jerk_weight: 0.25 # High jerk penalty for smooth motion
+      heading_weight: 0.18 # High heading precision
+      position_weight: 0.25 # Very high position precision
+      velocity_weight: 0.08 # Lower velocity penalty
+
+    # Hard constraints - Optimized precision limits
+    enable_hard_constraints: true
+    hard_constraints:
+      max_steering_angle: 0.4
+      max_acceleration: 1.3
+      max_deceleration: 1.6
+
+    # Optimized precision features
+    enable_obstacle_avoidance: true
+    obstacle_avoidance_weight: 1.5
+    enable_speed_control: true
+    speed_control_weight: 0.2 # Moderate speed control
+    enable_trajectory_tracking: true
+    trajectory_tracking_weight: 0.35 # High trajectory tracking
+    enable_safety_checks: true
+    safety_check_distance: 0.6 # Moderate safety distance
+
+    # Logging
+    enable_logging: true
+
+    # Optimized MPC parameters - Dynamic model for precision
+    mpc_type: "dynamic"
+    solver_type: "ipopt"
+    control_hz: 25.0 # High control frequency for precision
+
+    # Safety Parameters - Optimized balanced safety
+    safety_timeout: 0.8
+    emergency_brake_threshold: 2.0
+
+    # Topics
+    odom_topic: "/odom"
+    reference_topic: "/mpc/reference_trajectory"
+    status_topic: "/mpc/path_ready"
+    control_topic: "/drive"
+
+    # QoS
+    qos_depth: 10
