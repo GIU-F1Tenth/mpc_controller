@@ -1,0 +1,82 @@
+adaptive_mpc_controller:
+  ros__parameters:
+    # Vehicle parameters
+    wheelbase: 0.33
+
+    # MPC Horizon - Aggressive adaptive values
+    horizon_N: 15  # Shorter for faster response
+    horizon_T: 0.2
+    lookahead_distance: 0.25
+
+    # Vehicle limits - More aggressive
+    max_steering_angle: 0.6
+    max_acceleration: 6
+    max_deceleration: 8
+    min_speed: 0.1
+    max_speed: 10.0
+
+    # Cost function weights - Aggressive tuning
+    enable_cost_function_weights: true
+    cost_function_weights:
+      steering_weight: 0.5    # Lower for aggressive steering
+      acceleration_weight: 0.3 # Lower for aggressive acceleration
+      jerk_weight: 0.08       # Lower to allow aggressive maneuvers
+      heading_weight: 3.0     # Higher for precise orientation
+      position_weight: 6.0    # Higher for tight path following
+      velocity_weight: 0.8    # Lower to prioritize position
+
+    # Safety checks - Less conservative
+    enable_safety_checks: true
+    safety_check_distance: 0.3
+
+    # MPC parameters
+    mpc_type: "kinematic"
+    solver_type: "ipopt"
+    control_hz: 25 
+
+    # Safety Parameters
+    safety_timeout: 0.6
+    emergency_brake_threshold: 1.2
+    obstacle_safety_distance: 0.4
+
+    # Adaptive MPC Parameters - Very aggressive adaptation
+    enable_adaptation: true
+    adaptation_rate: 0.25  # Very fast adaptation
+    adaptation_interval: 0.06  # Very frequent adaptation
+
+    # Adaptive parameter bounds - Very wide ranges
+    adaptive_bounds:
+      horizon_N_min: 5
+      horizon_N_max: 35
+      horizon_T_min: 0.08
+      horizon_T_max: 0.6
+      position_weight_min: 2.0
+      position_weight_max: 25.0
+      heading_weight_min: 1.0
+      heading_weight_max: 12.0
+      velocity_weight_min: 0.1
+      velocity_weight_max: 3.0
+      steering_weight_min: 0.05
+      steering_weight_max: 1.0
+      acceleration_weight_min: 0.05
+      acceleration_weight_max: 0.8
+
+    # Topics
+    odom_topic: "/car_state/odom"
+    scan_topic: "/scan"
+    waypoints_topic: "/global_waypoints"          # Use actual topic
+    global_plan_topic: "/horizon_mapper/reference_path"  # Use actual topic
+    reference_topic: "/horizon_mapper/reference_trajectory"
+    status_topic: "/horizon_mapper/path_ready"
+    control_topic: "/drive"
+
+    # Publishing options
+    publish_diagnostics: true
+    publish_adaptation_status: true
+    publish_predicted_path: true
+
+    # Debug and Logging settings
+    debug_logging_enabled: false
+    performance_logging_enabled: true
+    adaptation_logging_enabled: true
+    log_frequency_divider: 3  # Very frequent logging

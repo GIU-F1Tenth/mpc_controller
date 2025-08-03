@@ -26,7 +26,8 @@ setup(
     tests_require=['pytest', 'pytest-cov'],
     entry_points={
         'console_scripts': [
-            'mpc_node = mpc_controller.mpc_node:main'
+            'mpc_node = mpc_controller.mpc_node:main',
+            'adaptive_mpc_node = mpc_controller.adaptive_mpc_node:main'
         ],
     },
 )

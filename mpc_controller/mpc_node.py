@@ -30,51 +30,13 @@ except ImportError:
     from optimized_mpc_controller import OptimizedMPCController
     from kinematic_bicycle_model import MPCType
     
-# Import configuration defaults
-import sys, os
-try:
-    # Try multiple paths to find config
-    possible_config_paths = [
-        os.path.join(os.path.dirname(__file__), '..', 'config'),  # Source tree
-        '/home/mohammedazab/ws/src/race_stack/config',  # Absolute path
-        os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')  # Alternative relative
-    ]
-    
-    config_imported = False
-    for config_path in possible_config_paths:
-        if os.path.exists(config_path) and config_path not in sys.path:
-            sys.path.insert(0, config_path)
-            try:
-                import config as default_config
-                print(f"Using config.py defaults from {config_path}")
-                config_imported = True
-                break
-            except ImportError:
-                continue
-    
-    if not config_imported:
-        raise ImportError("Config module not found in any expected location")
-        
-except ImportError as e:
-    # Fallback if config.py is not available
-    print(f"Config file not found ({e}), using hardcoded defaults")
-    class default_config:
-        enable_trajectory_generation = True
-        optimal_trajectory_path = "/home/mohammedazab/ws/src/race_stack/mpc_controller/trajectory/optimal_trajectory.csv"
-        reference_trajectory_path = "/home/mohammedazab/ws/src/race_stack/mpc_controller/trajectory/ref_trajectory.csv"
-        horizon_N = 10
-        wheelbase = 0.33
-        max_steering_angle = 0.5
-        min_speed = 0.1
+
 
 
 class MPCNode(Node):
     def __init__(self):
         super().__init__('optimized_mpc_node')
 
-        # Check if YAML config override is enabled
-        self.yaml_config_enabled = getattr(default_config, 'yaml_config_enabled', True)
-        
         self._declare_all_parameters()
         self._load_all_parameters()
         self._initialize_optimized_mpc()
@@ -86,146 +48,93 @@ class MPCNode(Node):
         self.get_logger().info("MPC Node has been started 🏎️ ")
 
     def _declare_all_parameters(self):
-        """Declare all ROS2 parameters using config.py defaults"""
+        """Declare all ROS2 parameters using defaults from params.yaml"""
 
-        # Check if YAML config should override defaults
-        yaml_enabled = getattr(default_config, 'yaml_config_enabled', True)
-        
-        if yaml_enabled:
-            self.get_logger().info("🔧 Using config.py defaults with YAML override enabled")
-        else:
-            self.get_logger().info("🔧 Using config.py defaults with YAML override disabled")
+        self.get_logger().info("🔧 Using params.yaml configuration")
 
         # Trajectory settings
-        self.declare_parameter('enable_trajectory_generation', 
-                             getattr(default_config, 'enable_trajectory_generation', True))
+        self.declare_parameter('enable_trajectory_generation', True)
         self.declare_parameter('optimal_trajectory_path', 
-                             getattr(default_config, 'optimal_trajectory_path', ''))
+                             "/home/mohammedazab/ws/src/race_stack/mpc_controller/trajectory/optimal_trajectory.csv")
         self.declare_parameter('reference_trajectory_path', 
-                             getattr(default_config, 'reference_trajectory_path', ''))
+                             "/home/mohammedazab/ws/src/race_stack/mpc_controller/trajectory/ref_trajectory.csv")
 
         # Vehicle parameters
-        self.declare_parameter('wheelbase', 
-                             getattr(default_config, 'wheelbase', 0.33))
+        self.declare_parameter('wheelbase', 0.33)
 
         # MPC Horizon
-        self.declare_parameter('horizon_N', 
-                             getattr(default_config, 'horizon_N', 8))
-        self.declare_parameter('horizon_T', 
-                             getattr(default_config, 'horizon_T', 0.8))
-        self.declare_parameter('lookahead_distance', 
-                             getattr(default_config, 'lookahead_distance', 0.5))
+        self.declare_parameter('horizon_N', 25)
+        self.declare_parameter('horizon_T', 0.3)
+        self.declare_parameter('lookahead_distance', 0.3)
 
         # Vehicle limits
-        self.declare_parameter('max_steering_angle', 
-                             getattr(default_config, 'max_steering_angle', 0.9))
-        self.declare_parameter('max_acceleration', 
-                             getattr(default_config, 'max_acceleration', 2.8))
-        self.declare_parameter('max_deceleration', 
-                             getattr(default_config, 'max_deceleration', 2.8))
-        self.declare_parameter('min_speed', 
-                             getattr(default_config, 'min_speed', 0.1))
-        self.declare_parameter('max_speed', 
-                             getattr(default_config, 'max_speed', 8.0))
+        self.declare_parameter('max_steering_angle', 0.5)
+        self.declare_parameter('max_acceleration', 5.0)
+        self.declare_parameter('max_deceleration', 7.0)
+        self.declare_parameter('min_speed', 0.1)
+        self.declare_parameter('max_speed', 8.0)
 
         # Cost function weights
-        self.declare_parameter('enable_cost_function_weights', 
-                             getattr(default_config, 'enable_cost_function_weights', True))
-        self.declare_parameter('cost_function_weights.steering_weight', 
-                             getattr(default_config, 'steering_weight', 1.0))
-        self.declare_parameter('cost_function_weights.acceleration_weight', 
-                             getattr(default_config, 'acceleration_weight', 0.5))
-        self.declare_parameter('cost_function_weights.jerk_weight', 
-                             getattr(default_config, 'jerk_weight', 0.1))
-        self.declare_parameter('cost_function_weights.heading_weight', 
-                             getattr(default_config, 'heading_weight', 2.0))
-        self.declare_parameter('cost_function_weights.position_weight', 
-                             getattr(default_config, 'position_weight', 5.0))
-        self.declare_parameter('cost_function_weights.velocity_weight', 
-                             getattr(default_config, 'velocity_weight', 1.0))
+        self.declare_parameter('enable_cost_function_weights', True)
+        self.declare_parameter('cost_function_weights.steering_weight', 0.7)
+        self.declare_parameter('cost_function_weights.acceleration_weight', 0.5)
+        self.declare_parameter('cost_function_weights.jerk_weight', 0.1)
+        self.declare_parameter('cost_function_weights.heading_weight', 2.0)
+        self.declare_parameter('cost_function_weights.position_weight', 5.0)
+        self.declare_parameter('cost_function_weights.velocity_weight', 1.0)
 
         # Hard constraints
-        self.declare_parameter('enable_hard_constraints', 
-                             getattr(default_config, 'enable_hard_constraints', False))
-        self.declare_parameter('hard_constraints.max_steering_angle', 
-                             getattr(default_config, 'hard_max_steering_angle', 0.4))
-        self.declare_parameter('hard_constraints.max_acceleration', 
-                             getattr(default_config, 'hard_max_acceleration', 0.8))
-        self.declare_parameter('hard_constraints.max_deceleration', 
-                             getattr(default_config, 'hard_max_deceleration', 0.8))
+        self.declare_parameter('enable_hard_constraints', False)
+        self.declare_parameter('hard_constraints.max_steering_angle', 0.4)
+        self.declare_parameter('hard_constraints.max_acceleration', 0.8)
+        self.declare_parameter('hard_constraints.max_deceleration', 0.8)
 
         # Obstacle avoidance
-        self.declare_parameter('enable_obstacle_avoidance', 
-                             getattr(default_config, 'enable_obstacle_avoidance', False))
-        self.declare_parameter('obstacle_avoidance_weight', 
-                             getattr(default_config, 'obstacle_avoidance_weight', 0.5))
+        self.declare_parameter('enable_obstacle_avoidance', False)
+        self.declare_parameter('obstacle_avoidance_weight', 0.5)
 
         # Speed control
-        self.declare_parameter('enable_speed_control', 
-                             getattr(default_config, 'enable_speed_control', True))
-        self.declare_parameter('speed_control_weight', 
-                             getattr(default_config, 'speed_control_weight', 0.2))
+        self.declare_parameter('enable_speed_control', True)
+        self.declare_parameter('speed_control_weight', 0.2)
 
         # Trajectory tracking
-        self.declare_parameter('enable_trajectory_tracking', 
-                             getattr(default_config, 'enable_trajectory_tracking', True))
-        self.declare_parameter('trajectory_tracking_weight', 
-                             getattr(default_config, 'trajectory_tracking_weight', 0.1))
+        self.declare_parameter('enable_trajectory_tracking', True)
+        self.declare_parameter('trajectory_tracking_weight', 0.1)
 
         # Safety checks
-        self.declare_parameter('enable_safety_checks', 
-                             getattr(default_config, 'enable_safety_checks', True))
-        self.declare_parameter('safety_check_distance', 
-                             getattr(default_config, 'safety_check_distance', 0.5))
+        self.declare_parameter('enable_safety_checks', True)
+        self.declare_parameter('safety_check_distance', 0.3)
 
         # Logging
-        self.declare_parameter('enable_logging', 
-                             getattr(default_config, 'enable_logging', True))
+        self.declare_parameter('enable_logging', True)
 
         # Additional MPC parameters
-        self.declare_parameter('mpc_type', 
-                             getattr(default_config, 'mpc_type', 'kinematic'))
-        self.declare_parameter('solver_type', 
-                             getattr(default_config, 'solver_type', 'ipopt'))
-        self.declare_parameter('control_hz', 
-                             getattr(default_config, 'control_hz', 20.0))
+        self.declare_parameter('mpc_type', 'kinematic')
+        self.declare_parameter('solver_type', 'ipopt')
+        self.declare_parameter('control_hz', 15.0)
 
         # Safety Parameters
-        self.declare_parameter('safety_timeout', 
-                             getattr(default_config, 'safety_timeout', 1.0))
-        self.declare_parameter('emergency_brake_threshold', 
-                             getattr(default_config, 'emergency_brake_threshold', 2.0))
+        self.declare_parameter('safety_timeout', 1.0)
+        self.declare_parameter('emergency_brake_threshold', 2.0)
 
         # Topics
-        self.declare_parameter('odom_topic', 
-                             getattr(default_config, 'odom_topic', '/car_state/odom'))
-        self.declare_parameter('reference_topic', 
-                             getattr(default_config, 'reference_topic', '/horizon_mapper/reference_trajectory'))
-        self.declare_parameter('status_topic', 
-                             getattr(default_config, 'status_topic', '/horizon_mapper/path_ready'))
-        self.declare_parameter('control_topic', 
-                             getattr(default_config, 'control_topic', '/drive'))
+        self.declare_parameter('odom_topic', '/car_state/odom')
+        self.declare_parameter('reference_topic', '/horizon_mapper/reference_trajectory')
+        self.declare_parameter('status_topic', '/horizon_mapper/path_ready')
+        self.declare_parameter('control_topic', '/drive')
         self.declare_parameter('pose_estimate_topic', '/initialpose')
 
         # QoS
-        self.declare_parameter('qos_depth', 
-                             getattr(default_config, 'qos_depth', 10))
+        self.declare_parameter('qos_depth', 10)
         
         # Debug and Logging settings
-        self.declare_parameter('debug_logging_enabled', 
-                             getattr(default_config, 'debug_logging_enabled', False))
-        self.declare_parameter('performance_logging_enabled', 
-                             getattr(default_config, 'performance_logging_enabled', True))
-        self.declare_parameter('state_logging_enabled', 
-                             getattr(default_config, 'state_logging_enabled', False))
-        self.declare_parameter('control_logging_enabled', 
-                             getattr(default_config, 'control_logging_enabled', True))
-        self.declare_parameter('trajectory_logging_enabled', 
-                             getattr(default_config, 'trajectory_logging_enabled', False))
-        self.declare_parameter('solver_logging_enabled', 
-                             getattr(default_config, 'solver_logging_enabled', False))
-        self.declare_parameter('log_frequency_divider', 
-                             getattr(default_config, 'log_frequency_divider', 10))
+        self.declare_parameter('debug_logging_enabled', False)
+        self.declare_parameter('performance_logging_enabled', True)
+        self.declare_parameter('state_logging_enabled', False)
+        self.declare_parameter('control_logging_enabled', True)
+        self.declare_parameter('trajectory_logging_enabled', False)
+        self.declare_parameter('solver_logging_enabled', False)
+        self.declare_parameter('log_frequency_divider', 10)
 
     def _load_all_parameters(self):
         """Load all parameters from ROS2 parameter server"""

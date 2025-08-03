@@ -1,15 +1,22 @@
 
-# F1TENTH MPC Controller with Real-Time Tuning GUI
+# F1TENTH Adaptive MPC Controller with Real-Time Tuning
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![ROS2 Humble](https://img.shields.io/badge/ROS2-Humble-blue.svg)](https://docs.ros.org/en/humble/)
 [![Python 3.8+](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
 
-An advanced Model Predictive Controller (MPC) package for F1TENTH autonomous racing platforms with real-time parameter tuning capabilities. Built on ROS 2 and CasADi, this package provides optimal control for high-speed racing with live parameter adjustment through intuitive GUI interfaces.
+An intelligent, self-adapting Model Predictive Controller (MPC) package for F1TENTH autonomous racing that dynamically adjusts parameters based on real-time conditions. Features both traditional optimized MPC and adaptive MPC with real-time parameter tuning capabilities.
 
 ---
 
 ## ✨ Key Features
+
+### 🤖 **Adaptive MPC Controller** (NEW!)
+- **Real-Time Parameter Adaptation** based on tracking error, obstacle proximity, and track characteristics
+- **Dynamic Horizon Adjustment** adapting prediction length to speed and curvature conditions
+- **Intelligent Cost Weight Tuning** optimizing control priorities based on performance metrics
+- **LiDAR-Based Obstacle Awareness** for adaptive safety parameter adjustment
+- **Multi-Modal Path Following** supporting waypoints, global plans, and reference trajectories
 
 ### 🏎️ **Advanced MPC Controller**
 - **Dual Vehicle Models**: Kinematic & Dynamic bicycle models
@@ -26,9 +33,10 @@ An advanced Model Predictive Controller (MPC) package for F1TENTH autonomous rac
 - **Emergency Controls** with instant safety parameter activation
 
 ### 📊 **Monitoring & Visualization**
+- **Adaptation Status**: Real-time monitoring of parameter changes and adaptation events
 - **Performance Plots**: Solve time, success rate, real-time factor
 - **Control Monitoring**: Steering commands, velocity tracking
-- **Parameter Presets**: Conservative, Balanced, Aggressive, Precision modes
+- **Parameter Presets**: Conservative, Balanced, Aggressive, Precision, Adaptive modes
 - **Status Dashboard** with live solver and vehicle state information
 
 ---
@@ -78,17 +86,37 @@ source install/setup.bash
 
 ## 🚀 Quick Start
 
-### 🔹 Launch MPC Controller
+### 🏁 **Basic MPC Controller (Traditional)**
 ```bash
-# Source ROS2 environment
-source /opt/ros/humble/setup.bash
-source ~/ros2_ws/install/setup.bash
-
-# Launch MPC controller
+# Launch traditional MPC with default parameters
 ros2 launch mpc_controller mpc_controller.launch.py
+
+# Launch with specific configuration
+ros2 launch mpc_controller mpc_controller.launch.py config:=params_aggressive
 ```
 
-### 🔹 Launch Real-Time Tuning GUI
+### 🤖 **Adaptive MPC Controller (NEW!)**
+```bash
+# Launch adaptive MPC with default adaptive parameters
+ros2 launch mpc_controller adaptive_mpc.launch.py
+
+# Launch with aggressive adaptation
+ros2 launch mpc_controller adaptive_mpc.launch.py config:=params_adaptive_aggressive
+
+# Launch with conservative adaptation
+ros2 launch mpc_controller adaptive_mpc.launch.py config:=params_adaptive_conservative
+
+# Launch with custom adaptation settings
+ros2 launch mpc_controller adaptive_mpc.launch.py 
+    enable_adaptation:=true 
+    adaptation_rate:=0.15 
+    control_hz:=25.0
+
+# Disable adaptation (fixed parameters)
+ros2 launch mpc_controller adaptive_mpc.launch.py enable_adaptation:=false
+```
+
+### 🎛️ **Real-Time Parameter Tuning GUI**
 ```bash
 # Navigate to package directory
 cd ~/ros2_ws/src/mpc_controller
@@ -105,6 +133,49 @@ python scripts/mpc_tuning_gui.py
 ```bash
 # Tkinter-based GUI (no PyQt5 dependency)
 python scripts/mpc_tuning_gui_simple.py
+```
+
+---
+
+## 🤖 Adaptive MPC Features
+
+### 📊 **Real-Time Metrics**
+The adaptive MPC continuously monitors:
+- **Tracking Performance**: Lateral error, heading error, velocity error
+- **Environment Conditions**: Obstacle proximity from LiDAR, track curvature, road width
+- **Vehicle Dynamics**: Speed, acceleration, control effort
+
+### ⚙️ **Parameter Adaptation**
+Based on real-time metrics, the controller adapts:
+
+#### **Horizon Parameters**
+- **Low Speed**: Shorter horizon for responsiveness
+- **High Speed**: Longer horizon for stability
+- **High Curvature**: Shorter horizon for agility
+- **Straight Sections**: Longer horizon for efficiency
+
+#### **Cost Weights**
+- **High Tracking Error**: Increase position/heading weights
+- **Close Obstacles**: Reduce steering aggressiveness
+- **Tight Corners**: Prioritize position over speed
+- **Open Sections**: Balance speed and position tracking
+
+### 🛡️ **Safety Management**
+- **Emergency Mode**: Triggered by close obstacle proximity
+- **Parameter Bounds**: Ensures adaptations remain within safe limits
+- **Gradual Changes**: Smooth parameter transitions for stability
+
+### 📈 **Monitoring Adaptive Behavior**
+```bash
+# Monitor adaptation status
+ros2 topic echo /adaptive_mpc/status
+
+# View diagnostics
+ros2 topic echo /diagnostics
+
+# Check current parameters (updated in real-time)
+ros2 param list /adaptive_mpc_node
+ros2 param get /adaptive_mpc_node horizon_N
 ```
 
 ---
@@ -139,7 +210,31 @@ python scripts/mpc_tuning_gui_simple.py
 ### 📁 **Configuration Files**
 ```
 config/
-├── params.yaml              # Balanced settings
+├── params.yaml                      # Balanced settings (traditional MPC)
+├── params_aggressive.yaml           # High-speed racing settings
+├── params_conservative.yaml         # Safe, stable settings
+├── params_precision.yaml            # High-precision tracking
+├── params_adaptive.yaml             # Adaptive MPC balanced settings
+├── params_adaptive_aggressive.yaml  # Adaptive MPC aggressive settings
+└── params_adaptive_conservative.yaml # Adaptive MPC conservative settings
+```
+
+### 🤖 **Adaptive MPC Parameters**
+
+#### **Adaptation Control**
+- `enable_adaptation`: Enable/disable adaptive behavior
+- `adaptation_rate`: Speed of parameter changes (0.0-1.0)
+- `adaptation_interval`: Frequency of adaptation checks
+
+#### **Adaptive Bounds**
+- `adaptive_bounds.horizon_N_min/max`: Horizon step limits
+- `adaptive_bounds.horizon_T_min/max`: Time horizon limits
+- `adaptive_bounds.*_weight_min/max`: Cost weight adaptation ranges
+
+#### **Additional Topics**
+- `scan_topic`: LiDAR topic for obstacle detection
+- `waypoints_topic`: Waypoint-based navigation
+- `global_plan_topic`: Global path planning integration
 ├── params_conservative.yaml # Safe, smooth driving
 ├── params_aggressive.yaml   # High-performance racing
 ├── params_precision.yaml    # Accurate trajectory following
@@ -183,6 +278,40 @@ J = Σ(Q_pos * ||pos_error||² + Q_heading * ||heading_error||² +
 ```
 mpc_controller/
 ├── launch/
+│   ├── mpc_controller.launch.py      # Traditional MPC launcher
+│   └── adaptive_mpc.launch.py        # Adaptive MPC launcher
+├── mpc_controller/
+│   ├── __init__.py                   # Package initialization
+│   ├── optimized_mpc_controller.py   # Traditional MPC implementation
+│   ├── adaptive_mpc_controller.py    # Adaptive MPC implementation  
+│   ├── mpc_node.py                   # Traditional MPC ROS2 node
+│   ├── adaptive_mpc_node.py          # Adaptive MPC ROS2 node
+│   ├── kinematic_bicycle_model.py    # Vehicle dynamics models
+│   └── dynamic_bicycle_model.py      # Advanced vehicle dynamics
+├── scripts/
+│   ├── mpc_tuning_gui.py            # Real-time parameter tuning GUI
+│   ├── mpc_tuning_gui_simple.py     # Lightweight tuning interface
+│   ├── mpc_visualizer.py            # Real-time data visualization
+│   ├── launch_mpc_gui.sh            # Automated GUI launcher
+│   └── test_parameter_update.py     # Parameter service testing
+├── config/
+│   ├── params.yaml                  # Traditional MPC balanced settings
+│   ├── params_adaptive.yaml         # Adaptive MPC balanced settings
+│   ├── params_adaptive_aggressive.yaml # Adaptive aggressive settings
+│   ├── params_adaptive_conservative.yaml # Adaptive conservative settings
+│   ├── params_aggressive.yaml       # Traditional aggressive settings
+│   ├── params_conservative.yaml     # Traditional conservative settings
+│   └── params_precision.yaml        # Traditional precision settings
+├── test/
+│   ├── test_mpc_node.py             # MPC node testing
+│   ├── test_adaptive_mpc.py         # Adaptive MPC testing
+│   └── test_model_switching.py      # Model switching tests
+├── resource/                        # Documentation assets
+├── docs/                           # Additional documentation
+├── package.xml                     # ROS2 package manifest
+├── setup.py                        # Python package setup
+└── README.md                       # This file
+```
 │   └── mpc_controller.launch.py     # ROS2 launch configuration
 ├── mpc_controller/                  # Core MPC implementation
 │   ├── mpc_node.py                 # Main ROS2 node
@@ -196,8 +325,7 @@ mpc_controller/
 │   ├── launch_mpc_gui.sh           # Automated GUI launcher
 │   └── test_parameter_update.py    # Parameter service testing
 ├── config/                         # Parameter configurations
-│   ├── params_*.yaml              # Various tuning presets
-│   └── config.py                  # Configuration utilities
+│   └── params_*.yaml              # Various tuning presets and main configuration
 ├── test/                          # Test implementations
 │   ├── test_mpc_node.py           # MPC node testing
 │   └── test_model_switching.py    # Model switching tests

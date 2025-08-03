@@ -4,21 +4,21 @@ optimized_mpc_controller:
     wheelbase: 0.33
 
     # MPC Horizon
-    horizon_N: 8
-    horizon_T: 0.5
+    horizon_N: 25
+    horizon_T: 0.3
     lookahead_distance: 0.3
 
     # Vehicle limits
-    max_steering_angle: 0.9
+    max_steering_angle: 0.5
     max_acceleration: 5
-    max_deceleration: 3
+    max_deceleration: 7
     min_speed: 0.1
     max_speed: 8.0
 
     # Cost function weights
     enable_cost_function_weights: true
     cost_function_weights:
-      steering_weight: 1.0
+      steering_weight: 0.7
       acceleration_weight: 0.5
       jerk_weight: 0.1
       heading_weight: 2.0
@@ -54,17 +54,48 @@ optimized_mpc_controller:
     # Optimized MPC parameters
     mpc_type: "kinematic" # "kinematic" or "dynamic"
     solver_type: "ipopt" # "ipopt" or "sqpmethod"
-    control_hz: 10.0
+    control_hz: 15
 
     # Safety Parameters
     safety_timeout: 1.0
     emergency_brake_threshold: 2.0
+    obstacle_safety_distance: 0.5
+
+    # Adaptive MPC Parameters
+    enable_adaptation: true
+    adaptation_rate: 0.1
+    adaptation_interval: 0.1
+
+    # Adaptive parameter bounds
+    adaptive_bounds:
+      horizon_N_min: 5
+      horizon_N_max: 50
+      horizon_T_min: 0.1
+      horizon_T_max: 1.0
+      position_weight_min: 1.0
+      position_weight_max: 20.0
+      heading_weight_min: 0.5
+      heading_weight_max: 10.0
+      velocity_weight_min: 0.1
+      velocity_weight_max: 5.0
+      steering_weight_min: 0.1
+      steering_weight_max: 2.0
+      acceleration_weight_min: 0.1
+      acceleration_weight_max: 2.0
 
     # Topics
-    odom_topic: "car_state/odom"
+    odom_topic: "/car_state/odom"
+    scan_topic: "/scan"
+    waypoints_topic: "/waypoints"
+    global_plan_topic: "/global_plan"
     reference_topic: "/horizon_mapper/reference_trajectory"
     status_topic: "/horizon_mapper/path_ready"
     control_topic: "/drive"
+
+    # Publishing options
+    publish_diagnostics: true
+    publish_adaptation_status: true
+    publish_predicted_path: true
 
     # QoS
     qos_depth: 10
@@ -76,4 +107,5 @@ optimized_mpc_controller:
     control_logging_enabled: true
     trajectory_logging_enabled: false
     solver_logging_enabled: false
+    adaptation_logging_enabled: true
     log_frequency_divider: 10  # Log every N iterations
