@@ -576,19 +576,39 @@ class AdaptiveMPCNode(Node):
                 point = [
                     vehicle_state.x,
                     vehicle_state.y,
-                    vehicle_state.v,  # Velocity
+                    max(0.1, vehicle_state.v),  # Ensure minimum velocity
                     vehicle_state.theta  # Heading
                 ]
                 reference_points.append(point)
             
             if reference_points:
-                self.reference_trajectory = np.array(reference_points)
+                # Convert to numpy array
+                trajectory_array = np.array(reference_points)
+                
+                # Extend trajectory to match MPC horizon if needed
+                if len(reference_points) < self.horizon_N + 1:
+                    # Repeat the last point to reach required length
+                    last_point = reference_points[-1]
+                    while len(reference_points) < self.horizon_N + 1:
+                        reference_points.append(last_point.copy())
+                    trajectory_array = np.array(reference_points)
+                elif len(reference_points) > self.horizon_N + 1:
+                    # Truncate to required length
+                    trajectory_array = trajectory_array[:self.horizon_N + 1]
+                
+                self.reference_trajectory = trajectory_array
                 self._compute_track_curvature()
+                self.get_logger().debug(f"✅ Received reference trajectory with {len(msg.states)} points, extended to {len(self.reference_trajectory)}")
+                
+                # Log first point for debugging
                 if len(reference_points) > 0:
-                    self.get_logger().debug(f"Received reference trajectory with {len(reference_points)} points")
+                    first_point = reference_points[0]
+                    self.get_logger().debug(f"   First point: x={first_point[0]:.3f}, y={first_point[1]:.3f}, v={first_point[2]:.3f}, θ={first_point[3]:.3f}")
                 
         except Exception as e:
             self.get_logger().error(f"Error in reference trajectory callback: {e}")
+            import traceback
+            self.get_logger().error(f"Traceback: {traceback.format_exc()}")
 
     def status_callback(self, msg: Bool):
         """Handle path status messages"""
@@ -632,6 +652,14 @@ class AdaptiveMPCNode(Node):
             self.get_logger().debug("Waiting for reference trajectory...")
             return
         
+        # Add debug logging for first few iterations
+        if self.first_control_command:
+            self.get_logger().info(f"🚀 Starting control loop!")
+            self.get_logger().info(f"   Current state: x={self.current_state['x']:.3f}, y={self.current_state['y']:.3f}, v={self.current_state['v']:.3f}, θ={self.current_state['theta']:.3f}")
+            self.get_logger().info(f"   Reference trajectory: {len(self.reference_trajectory)} points")
+            self.get_logger().info(f"   First ref point: x={self.reference_trajectory[0][0]:.3f}, y={self.reference_trajectory[0][1]:.3f}")
+            self.first_control_command = False
+        
         start_time = time.time()
         
         try:
@@ -655,6 +683,12 @@ class AdaptiveMPCNode(Node):
                 
                 self.control_pub.publish(control_msg)
                 
+                # Log successful control command
+                self.get_logger().debug(
+                    f"✅ Control: steer={control_msg.drive.steering_angle:.3f}, "
+                    f"accel={control_msg.drive.acceleration:.3f}, speed={control_msg.drive.speed:.3f}"
+                )
+                
                 # Log adaptation events
                 if result.get('adapted', False) and self.adaptation_logging_enabled:
                     self.get_logger().info(
@@ -670,12 +704,15 @@ class AdaptiveMPCNode(Node):
                     self.control_computation_times.pop(0)
                 
             else:
-                # Emergency stop
+                # Emergency stop with detailed error info
+                error_msg = result.get('error', 'Unknown error')
                 self._publish_emergency_stop()
-                self.get_logger().warn("⚠️ MPC solve failed, emergency stop activated")
+                self.get_logger().warn(f"⚠️ MPC solve failed: {error_msg}, emergency stop activated")
             
         except Exception as e:
             self.get_logger().error(f"Error in control callback: {e}")
+            import traceback
+            self.get_logger().error(f"Traceback: {traceback.format_exc()}")
             self._publish_emergency_stop()
 
     def _publish_emergency_stop(self):

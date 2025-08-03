@@ -4,26 +4,26 @@ optimized_mpc_controller:
     wheelbase: 0.33
 
     # MPC Horizon
-    horizon_N: 25
-    horizon_T: 0.3
+    horizon_N: 9
+    horizon_T: 0.4
     lookahead_distance: 0.3
 
     # Vehicle limits
     max_steering_angle: 0.5
-    max_acceleration: 5
-    max_deceleration: 7
+    max_acceleration: 2.0
+    max_deceleration: 7.0
     min_speed: 0.1
-    max_speed: 8.0
+    max_speed: 15.0
 
     # Cost function weights
     enable_cost_function_weights: true
     cost_function_weights:
-      steering_weight: 0.7
-      acceleration_weight: 0.5
-      jerk_weight: 0.1
-      heading_weight: 2.0
-      position_weight: 5.0
-      velocity_weight: 1.0
+      steering_weight: 2.0
+      acceleration_weight: 0.9
+      jerk_weight: 0.3
+      heading_weight: 3.0
+      position_weight: 1.3
+      velocity_weight: 5.0
 
     # Hard constraints
     enable_hard_constraints: false
@@ -45,7 +45,7 @@ optimized_mpc_controller:
     trajectory_tracking_weight: 0.1
 
     # Safety checks
-    enable_safety_checks: true
+    enable_safety_checks: false
     safety_check_distance: 0.3
 
     # Logging
@@ -86,8 +86,6 @@ optimized_mpc_controller:
     # Topics
     odom_topic: "/car_state/odom"
     scan_topic: "/scan"
-    waypoints_topic: "/waypoints"
-    global_plan_topic: "/global_plan"
     reference_topic: "/horizon_mapper/reference_trajectory"
     status_topic: "/horizon_mapper/path_ready"
     control_topic: "/drive"
